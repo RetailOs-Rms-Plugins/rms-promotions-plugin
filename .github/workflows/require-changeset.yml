@@ -1,0 +1,36 @@
+name: Require changeset in PR
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  check-changeset:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.head_ref }}
+
+      - name: Fetch target branch
+        run: git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1
+
+      - name: Ensure changeset exists if code changed
+        run: |
+          BASE_SHA=${{ github.event.pull_request.base.sha }}
+          HEAD_SHA=${{ github.event.pull_request.head.sha }}
+
+          CHANGED_FILES=$(git diff --name-only $BASE_SHA $HEAD_SHA)
+
+          # Ignore .changeset/ and docs-only changes
+          CODE_CHANGE=$(printf "%s\n" "$CHANGED_FILES" | grep -Ev '^(.changeset/|docs/|README.md)' || true)
+
+          if [ -n "$CODE_CHANGE" ]; then
+            HAS_CHANGESET=$(printf "%s\n" "$CHANGED_FILES" | grep '^.changeset/' || true)
+            if [ -z "$HAS_CHANGESET" ]; then
+              echo "::error ::This PR changes code but has no .changeset/*.md. Run 'yarn changeset' and commit the file."
+              exit 1
+            fi
+          fi

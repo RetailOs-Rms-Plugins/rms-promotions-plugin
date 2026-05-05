@@ -1,0 +1,36 @@
+name: Setup CI
+
+description: Setup CI for global-settings
+
+inputs:
+  NPM_TOKEN:
+    description: The NPM token to use for the CI
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Enable Corepack
+      shell: bash
+      run: corepack enable
+
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version-file: ".node-version"
+        cache: "yarn"
+
+    - name: Install dependencies
+      shell: bash
+      
+      run: |
+        yarn cache clean
+        yarn install --immutable
+
+    # - name: Lint
+    #   run: pnpm lint
+    #   continue-on-error: false
+
+    # - name: Test
+    #   run: pnpm test
+    #   continue-on-error: false
