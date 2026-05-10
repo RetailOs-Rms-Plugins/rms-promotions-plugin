@@ -53,41 +53,63 @@ The table below maps real merchant promotion descriptions to the Medusa-native c
 
 ## 4. Rule Design
 
-### 4.1 Rule Structure: Field + Operator + Value
+### 4.1 Rule Structure: `rule_type` + `config`
 
-Each rule is a **triple**:
+Each rule is stored in the DB as two fields: a `rule_type` discriminator and a `config` JSONB object whose shape depends on the type. The evaluator dispatches to the correct handler based on `rule_type`:
 
 ```ts
-type Rule = {
+const ruleEvaluators: Record<string, (config: unknown, cart: EnrichedCart) => boolean> = {
+  comparison: evaluateComparisonRule,
+  // future types registered here — zero DB migrations needed
+}
+
+function evaluateRule(rule: RmsRule, cart: EnrichedCart): boolean {
+  const evaluator = ruleEvaluators[rule.rule_type]
+  if (!evaluator) throw new Error(`Unknown rule type: ${rule.rule_type}`)
+  return evaluator(rule.config, cart)
+}
+```
+
+**Currently one rule type exists: `comparison`.** All seven supported fields fit the same `field + operator + value` shape. Future rule types (e.g. `bundle`) are registered as new evaluator functions with no schema changes required.
+
+### 4.2 Supported Rule Types and Config Fields
+
+#### `rule_type: "comparison"`
+
+Config shape:
+```ts
+{
   field: RuleField
   operator: RuleOperator
   value: number | string | string[] | boolean
   scope?: {
-    product_id?: string
-    collection_id?: string
+    product_id?: string      // only for quantityOfProduct
+    collection_id?: string   // only for quantityOfCollection
   }
 }
 ```
 
-The `scope` field is only present for product- or collection-scoped fields (`quantityOfProduct`, `quantityOfCollection`). It holds the ID of the product or collection the rule applies to.
+| `field` | Description | Valid `operator` values | `value` type | `scope` required? |
+|---|---|---|---|---|
+| `subtotal` | Cart item subtotal (pre-discount, pre-shipping). Maps to `item_subtotal` on the Medusa cart. **Implementer note:** may be a `BigNumber` — extract safely via `typeof val === 'number' ? val : val.toNumber()`. Verify field name against live cart shape. | `eq` `neq` `gt` `gte` `lt` `lte` | number | no |
+| `quantity` | Total item count in cart | `eq` `neq` `gt` `gte` `lt` `lte` | number | no |
+| `quantityOfProduct` | Quantity of a specific product in cart | `eq` `neq` `gt` `gte` `lt` `lte` | number | `{ product_id }` |
+| `quantityOfCollection` | Quantity of items from a specific collection | `eq` `neq` `gt` `gte` `lt` `lte` | number | `{ collection_id }` |
+| `usesPerCustomer` | Times this customer has used this promotion (non-cancelled/refunded orders) | `lt` `lte` | number | no |
+| `customerGroup` | Customer belongs to a Medusa Customer Group | `in` `nin` | string[] (group IDs) | no |
+| `firstOrder` | Customer has zero prior orders | `eq` | boolean | no |
 
-Operators are **data-type-aware** — the UI only presents valid operators for the selected field type (a pattern used by Braze, Segment, and Adobe Analytics to prevent nonsensical rule creation).
+#### Future rule types
 
-### 4.2 Supported Fields and Operators
+| `rule_type` | Planned config fields | Status |
+|---|---|---|
+| `bundle` | `bundle_size`, `bundle_price`, `scope: { product_id }` | Pending — blocked on verifying Medusa BuyGet stacking behavior (see Section 9) |
 
-| Field | Description | Valid Operators | Value Type |
-|---|---|---|---|
-| `subtotal` | Cart item subtotal (pre-discount) | `eq` `neq` `gt` `gte` `lt` `lte` | number |
-| `quantity` | Total item count in cart | `eq` `neq` `gt` `gte` `lt` `lte` | number |
-| `quantityOfProduct` | Quantity of a specific product in cart | `eq` `neq` `gt` `gte` `lt` `lte` | number |
-| `quantityOfCollection` | Quantity of items from a specific collection | `eq` `neq` `gt` `gte` `lt` `lte` | number |
-| `usesPerCustomer` | How many times this customer has already used this promotion | `lt` `lte` | number |
-| `customerGroup` | Customer belongs to a Medusa Customer Group | `in` `nin` | string[] (customer group IDs) |
-| `firstOrder` | Customer has zero completed orders | `eq` | boolean |
-
-> **Note on `usesPerCustomer`:** Medusa natively supports a total usage cap (`usage_limit`) but not a per-customer cap. This rule fills that gap by querying order history at evaluation time.
+> **Note on `usesPerCustomer`:** Medusa natively supports a total usage cap (`usage_limit`) but not a per-customer cap. This rule fills that gap by querying order history at evaluation time. Only orders with status `cancelled` or `refunded` are excluded from the count — all other statuses (`pending`, `processing`, `completed`, etc.) count as a use. This prevents abuse where a customer places multiple orders in rapid succession before any reach `completed` status.
 
 > **Note on `customerGroup`:** values are Medusa **Customer Group IDs** (e.g. `cusgrp_vip`), not group names. IDs are stable — group names can be renamed without breaking rules. The rule evaluator reads `cart.customer.groups[].id`. On guest carts (no customer attached), `customerGroup` rules are skipped and treated as passing — see Section 5 for guest cart behavior.
+
+> **Guest cart behavior (all customer-dependent rules):** When the cart has no attached customer, `customerGroup`, `firstOrder`, and `usesPerCustomer` rules all **pass** (optimistic/permissive). A guest has no history to query and no group membership — blocking them would be unfair and inconsistent with how `customerGroup` is already handled. This mirrors the stance the PRD takes for `customerGroup`.
 
 > **Note on opposites:** Fields like `subtotal` and `quantity` express both minimum and maximum constraints via operators — `subtotal gte 100` sets a minimum; `subtotal lte 500` sets a maximum. No separate `minSubtotal`/`maxSubtotal` keys are needed.
 
@@ -142,18 +164,18 @@ Each promotion managed by this plugin carries a **promotion-level boolean flag**
 **Why `is_automatic: false` on all managed promotions:**
 Medusa's native `is_automatic: true` flag makes it impossible to conditionally remove a promotion — `updateCartPromotionsWorkflow` re-applies automatic promotions even when called with action REMOVE. Therefore, all promotions managed by this plugin must be created with `is_automatic: false`. The plugin's own auto-apply engine (Layer 2) takes over this responsibility entirely for promotions where `rms_auto_apply: true`.
 
-> **Operational constraint:** if a managed promotion is accidentally set to `is_automatic: true` in Medusa, it will be applied unconditionally by Medusa regardless of our rules. This must be enforced at promotion creation — ideally validated by the API.
+> **Operational constraint:** if a managed promotion is accidentally set to `is_automatic: true` in Medusa, it will be applied unconditionally by Medusa regardless of our rules. This is enforced at rule attachment time — `POST /admin/promotions/:id/rules` checks the promotion's `is_automatic` flag and rejects with HTTP 400 if it is `true`. Error message: *"This promotion must have is_automatic: false to use custom rules. Update the promotion in Medusa admin before attaching rules."*
 
 ---
 
 ## 5. Three-Layer Enforcement Architecture
 
-The plugin enforces custom rules across three points in the cart lifecycle. All three layers share the same rule evaluation logic — rule evaluation is pure (no DB calls, no side effects) and implemented once.
+The plugin enforces custom rules across three points in the cart lifecycle. All three layers share the same rule evaluation logic — rule evaluation is pure (no DB calls, no side effects) and implemented once. Before calling the evaluator, the caller pre-fetches any data the rules need and passes it in as an enriched context object. For example, if any rule uses `usesPerCustomer`, the caller queries the order count for that customer+promotion pair and injects the result into the context — the evaluator itself never makes DB calls.
 
 | Layer | Mechanism | Timing | Behavior |
 |---|---|---|---|
 | 1 — Code Gate | `updateCartPromotionsWorkflow.hooks.validate` | Synchronous — before any promotion is applied | Throws `MedusaError` (HTTP 400), cart unchanged. Only fires on ADD action with promo codes. |
-| 2 — Auto-Apply Engine | `cart.updated` subscriber | Asynchronous — after HTTP response is returned | Fetches managed promotions with DB-level filters, filters out those that fail Medusa's native eligibility rules, evaluates our custom rules, computes delta (toAdd / toRemove), applies via `updateCartPromotionsWorkflow`. Short-circuits if no changes needed. Only runs for promotions where `rms_auto_apply: true`. |
+| 2 — Auto-Apply Engine | `cart.updated` subscriber | Asynchronous — after HTTP response is returned | Fetches managed promotions with DB-level filters, filters out those that fail Medusa's native eligibility rules, evaluates our custom rules, computes delta (toAdd / toRemove), applies via `updateCartPromotionsWorkflow`. Short-circuits if no changes needed. Only runs for promotions where `rms_auto_apply: true`. **Delta computation:** (1) fetch all `rms_auto_apply=true` promotions from plugin DB; (2) fetch current cart with `promotions` expanded; (3) for each candidate: rules pass → should be on cart, rules fail → should not; (4) `toAdd` = candidates that pass but are absent from `cart.promotions`; `toRemove` = entries in `cart.promotions` that the plugin manages (has a rule set for) but whose rules now fail. Promotions not known to the plugin are never touched. |
 | 3 — Checkout Gate | `completeCartWorkflow.hooks.validate` | Synchronous — before order is placed | Throws `MedusaError` (HTTP 400), order blocked. Never mutates — validation only. |
 
 **Why three layers?**
@@ -166,18 +188,11 @@ Layer 1 exists for user experience: a customer entering an invalid code gets an 
 
 **Layer 1 / Layer 2 interaction — intentionally redundant, always safe:** when Layer 2 calls `updateCartPromotionsWorkflow` to ADD a promotion, Layer 1's `hooks.validate` fires synchronously inside that same workflow call. This means our custom rules are evaluated twice — once by Layer 2 (deciding to add) and once by Layer 1 (validating the add). Because both layers share exactly the same rule evaluation logic, Layer 1 will always agree with Layer 2's decision. The double evaluation is redundant but harmless and requires no special handling.
 
-**Open design decision — can a customer remove an auto-apply promotion?**
+**Customer opt-out of auto-apply promotions: not supported (by design)**
 
-When a customer calls the API to remove an auto-apply promotion (`rms_auto_apply: true`) from their cart, Layer 2 fires on the resulting `cart.updated` event and re-adds it immediately — because the custom rules still pass. The customer cannot permanently opt out. This mirrors Medusa's native behavior for `is_automatic: true` promotions, which also cannot be removed by the customer.
+When a customer calls the API to remove an auto-apply promotion (`rms_auto_apply: true`) from their cart, Layer 2 fires on the resulting `cart.updated` event and re-adds it immediately — because the custom rules still pass. The customer cannot permanently opt out. This mirrors Medusa's native behavior for `is_automatic: true` promotions.
 
-This is the **current default behavior**. It has not been explicitly decided whether customers should be able to opt out. The table below documents the options for future resolution:
-
-| Option | Description | Pros | Cons |
-|---|---|---|---|
-| **A — No opt-out** *(current default, matches Medusa native)* | Layer 2 always re-adds the promotion when rules pass, regardless of prior removal | Simple, predictable — merchant always knows which promotions are active on eligible carts | Can frustrate customers who genuinely don't want a promotion (e.g. a gift-with-purchase they can't use) |
-| **B — Explicit opt-out via declined list** | Cart tracks a set of "declined promotion IDs" (on cart metadata or a new table). Layer 2 skips promotions in the declined list. Customer calls API to decline. | Respects customer preference; better UX for edge cases | Requires storing declined state per cart, complicates Layer 2, unclear when a "decline" expires (does it reset when cart changes?) |
-
-> **Note to implementer:** before shipping auto-apply promotions to end customers, decide which option to implement. Option A ships by default. Option B requires a declined-list mechanism and a storefront API endpoint for customers to opt out.
+This is intentional. Merchants running rules-based promotions (e.g. "spend ₪300 get 5% off") expect the discount to apply automatically to all eligible carts — customer opt-out would undermine that. No declined-list mechanism is needed.
 
 **Layer 2 promotion fetch — filters applied on every call:**
 
@@ -230,7 +245,9 @@ Any promotion that fails one of its native rules is dropped from the candidate l
 
 ## 6. Database Storage Options
 
-Custom rules must be persisted somewhere. Two approaches are documented below. **No decision has been made** — this section presents both options for evaluation.
+Custom rules must be persisted somewhere. Two approaches were evaluated. **Decision: Option B (linked module) was chosen** — rationale is at the end of this section.
+
+The options are preserved below so future readers understand the trade-offs behind the decision.
 
 ### Option A — Store Rules in `promotion.metadata`
 
@@ -267,12 +284,48 @@ A new Medusa module introduces dedicated tables for rule sets and rules, linked 
 **Cons:**
 - Larger upfront build: requires Medusa module definition, link definition, migrations
 - More code to maintain and test
-- Must handle promotion lifecycle events (delete rules when a promotion is deleted)
+- Must handle promotion lifecycle events (delete rules when a promotion is deleted) — handled via a `promotion.deleted` subscriber that deletes the linked rule sets (chosen over link-level cascade, which is less explicit and varies by Medusa version)
 - Increases the complexity of the plugin's dependency surface
 
-### Recommendation
+### Decision: Fully normalized linked module (3 tables)
 
-Option B is the stronger long-term choice. The rule structure — field + operator + value + optional scope, nested inside rule sets with include/exclude types — is complex enough that treating it as opaque JSON creates compounding operational cost over time. The build investment is one-time; the queryability and integrity benefits persist for the life of the plugin.
+Three plugin-owned tables are introduced. This is the full Option B — chosen because the plugin is expected to support hundreds of clients with thousands of promotions, and individual rules must be queryable and reportable via SQL over the long run.
+
+```
+rms_promotion_config
+  id                TEXT PK
+  promotion_id      TEXT UNIQUE  ← link to Medusa's promotion table
+  rms_auto_apply    BOOLEAN DEFAULT false
+
+rms_rule_group
+  id                TEXT PK
+  promotion_id      TEXT         ← FK to rms_promotion_config.promotion_id
+  type              ENUM('include', 'exclude')
+
+rms_rule
+  id                TEXT PK
+  rule_group_id     TEXT         ← FK to rms_rule_group.id
+  rule_type         TEXT         ← discriminator: 'comparison' | future types
+  config            JSONB        ← shape determined by rule_type (see Section 4.2)
+```
+
+**Relationships:**
+- `rms_promotion_config` → `rms_rule_group`: one-to-many (one promotion, many groups)
+- `rms_rule_group` → `rms_rule`: one-to-many (one group, many rules)
+- No many-to-many relationships anywhere
+
+**Logic encoded in the schema:**
+- Rules within a group are joined by **AND** — all must pass
+- Groups are joined by **OR** — any passing group makes the promotion eligible
+- `type = 'exclude'` groups act as AND NOT gates — if any exclude group passes, the promotion is suppressed
+
+**Why `rms_promotion_config` exists:** `rms_auto_apply` is a promotion-level flag, not a group-level flag. It needs a home separate from rule groups. This table also serves as the plugin's anchor for the Medusa link — Medusa owns `promotion`, the plugin owns `rms_promotion_config`.
+
+**`rule_type` column:** plain text discriminator. The evaluator dispatch map uses this to select the correct handler function. Unknown values throw at evaluation time. Current valid value: `'comparison'`.
+
+**`config` column:** JSONB. Shape is fully determined by `rule_type` — see Section 4.2 for each type's config fields. All rule-type-specific data lives here, including scope (`product_id`, `collection_id`) for scoped comparison rules. A GIN index or targeted path index on `config` can be added if SQL queries on rule fields are needed in future.
+
+**Promotion lifecycle:** when a promotion is deleted, a `promotion.deleted` subscriber deletes the `rms_promotion_config` row and cascades to its rule groups and rules (chosen over link-level cascade for explicitness and Medusa version independence).
 
 ---
 
@@ -280,7 +333,7 @@ Option B is the stronger long-term choice. The rule structure — field + operat
 
 ### 7.1 Widget on the Promotion Page
 
-The plugin injects a widget into the promotion detail page using Medusa's widget injection zone (`promotion.details.before` or `promotion.details.after`). No other admin pages are added. Rules are only accessible through their promotion — there is no standalone rules list page.
+The plugin injects a widget into the promotion detail page using Medusa's widget injection zone `promotion.details.after`. Rules appear below Medusa's native promotion fields — merchants configure the promotion first, then attach rules. No other admin pages are added. Rules are only accessible through their promotion — there is no standalone rules list page.
 
 The widget on the promotion page displays:
 - A **read-only summary** of the promotion's current rules (rule sets listed, each rule displayed as a readable sentence)
@@ -289,12 +342,9 @@ The widget on the promotion page displays:
 
 ### 7.2 Rule Editor
 
-The rule editor can be implemented as either a **Drawer** (side panel) or a **FocusModal**, both of which are first-class Medusa UI components from `@medusajs/ui`. The choice is left to the implementing developer.
+The rule editor uses **`RouteFocusModal`** from `@retailos-ai/rms-medusa-ui` (not exported by `@medusajs/ui`). FocusModal was chosen over Drawer because the rule editor layout — multiple groups each with `field / operator / value / scope` columns — needs horizontal space that a Drawer cannot provide.
 
-- **Drawer** is Medusa's standard pattern for editing existing entity data and is consistent with how native promotion fields are edited
-- **FocusModal** gives more horizontal space, which may be preferable given the `field / operator / value / scope` row layout across multiple rule sets
-
-Both follow the Medusa convention: `Header`, `Body`, and `Footer` (with Cancel and Save actions) using `react-hook-form` + `Zod` validation.
+The editor follows the Medusa convention: `Header`, `Body`, and `Footer` (with Cancel and Save actions) using `react-hook-form` + `Zod` validation.
 
 **Rule editor layout:**
 
@@ -357,36 +407,36 @@ The plugin exposes a REST API for full rule CRUD on a promotion. All endpoints a
 | `PATCH` | `/admin/promotions/:id/rules` | Update specific rule sets or the `rms_auto_apply` flag |
 | `DELETE` | `/admin/promotions/:id/rules` | Remove all custom rules from a promotion |
 
-The API accepts and returns the full rule set structure including include/exclude groups, individual rules with field/operator/value/scope, and the `rms_auto_apply` flag.
+The API accepts and returns the full rule group structure including include/exclude groups, individual rules with `rule_type` + `config`, and the `rms_auto_apply` flag.
 
-Validation is enforced at the API layer: invalid field/operator combinations, missing scope for scoped fields, and unrecognized field names are rejected with descriptive errors.
+**`PATCH` semantics:** field-level update. If `rule_groups` is present in the body, the entire rule group collection is replaced. If `rms_auto_apply` is present, only that flag is updated. Fields absent from the body are left unchanged.
+
+Validation is enforced at the API layer: unrecognized `rule_type` values, invalid `field`/`operator` combinations inside a `comparison` config, missing `scope` for scoped fields, and missing required config keys are rejected with descriptive errors.
 
 **Example request/response shape:**
-
-> The structure below is a reference design, not a strict contract. The implementing developer may adjust field names, nesting, or conventions if a different shape better fits the chosen DB storage model or Medusa API conventions — as long as the semantics (rule sets, include/exclude type, field/operator/value/scope per rule, rms_auto_apply flag) are preserved.
 
 `POST /admin/promotions/:id/rules` — request body:
 ```json
 {
   "rms_auto_apply": true,
-  "rule_sets": [
+  "rule_groups": [
     {
       "type": "include",
       "rules": [
-        { "field": "subtotal", "operator": "gte", "value": 300 },
-        { "field": "subtotal", "operator": "lte", "value": 500 }
+        { "rule_type": "comparison", "config": { "field": "subtotal", "operator": "gte", "value": 300 } },
+        { "rule_type": "comparison", "config": { "field": "subtotal", "operator": "lte", "value": 500 } }
       ]
     },
     {
       "type": "include",
       "rules": [
-        { "field": "quantityOfProduct", "operator": "gte", "value": 4, "scope": { "product_id": "prod_123" } }
+        { "rule_type": "comparison", "config": { "field": "quantityOfProduct", "operator": "gte", "value": 4, "scope": { "product_id": "prod_123" } } }
       ]
     },
     {
       "type": "exclude",
       "rules": [
-        { "field": "customerGroup", "operator": "in", "value": ["vip"] }
+        { "rule_type": "comparison", "config": { "field": "customerGroup", "operator": "in", "value": ["vip"] } }
       ]
     }
   ]
@@ -395,32 +445,32 @@ Validation is enforced at the API layer: invalid field/operator combinations, mi
 
 The example above reads as: *apply when (subtotal is between ₪300–₪500) OR (4+ units of product prod_123 are in the cart), EXCEPT when the customer has the "vip" tag.*
 
-Response adds server-generated `id` fields on each rule set and rule:
+Response adds server-generated `id` fields on each group and rule:
 ```json
 {
   "promotion_id": "promo_abc",
   "rms_auto_apply": true,
-  "rule_sets": [
+  "rule_groups": [
     {
-      "id": "rset_001",
+      "id": "rgrp_001",
       "type": "include",
       "rules": [
-        { "id": "rule_001", "field": "subtotal", "operator": "gte", "value": 300 },
-        { "id": "rule_002", "field": "subtotal", "operator": "lte", "value": 500 }
+        { "id": "rule_001", "rule_type": "comparison", "config": { "field": "subtotal", "operator": "gte", "value": 300 } },
+        { "id": "rule_002", "rule_type": "comparison", "config": { "field": "subtotal", "operator": "lte", "value": 500 } }
       ]
     },
     {
-      "id": "rset_002",
+      "id": "rgrp_002",
       "type": "include",
       "rules": [
-        { "id": "rule_003", "field": "quantityOfProduct", "operator": "gte", "value": 4, "scope": { "product_id": "prod_123" } }
+        { "id": "rule_003", "rule_type": "comparison", "config": { "field": "quantityOfProduct", "operator": "gte", "value": 4, "scope": { "product_id": "prod_123" } } }
       ]
     },
     {
-      "id": "rset_003",
+      "id": "rgrp_003",
       "type": "exclude",
       "rules": [
-        { "id": "rule_004", "field": "customerGroup", "operator": "in", "value": ["vip"] }
+        { "id": "rule_004", "rule_type": "comparison", "config": { "field": "customerGroup", "operator": "in", "value": ["vip"] } }
       ]
     }
   ]
@@ -441,3 +491,9 @@ If a promotion carries an exotic Medusa rule attribute beyond the four standard 
 
 ### Discount stacking
 Whether a promotion can combine with other promotions (product + order + shipping categories, as Shopify models it) is left entirely to Medusa's native behavior. The plugin does not add stacking constraints in this version.
+
+### Promotion duplication
+The plugin is API-first. A duplicated promotion is a new `promotion_id` with no `rms_promotion_config` row — identical to any freshly created promotion. No rules are copied. The merchant attaches rules via the widget or API as normal. No special handling required.
+
+### Bundle/multiplied discounts ("3 for ₪20" scaling with quantity)
+The current plugin only gates eligibility — it does not influence Medusa's discount calculation. "3 for ₪20" can be set up as a promotion with rule `quantityOfProduct gte 3`, but the ₪4 discount applies once regardless of how many groups of 3 are in the cart (6 units → ₪44, not ₪40). **Open question:** verify whether Medusa's native `buyget` type re-applies the deal for each complete group of qualifying items. If it does, the problem is already solved natively. If not, a `bundle` rule type (see Section 4.2) or a separate plugin is required. Blocked until someone tests BuyGet stacking behavior on a live Medusa instance.
