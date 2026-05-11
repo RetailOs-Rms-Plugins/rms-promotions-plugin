@@ -1,0 +1,441 @@
+{
+  "info": {
+    "name": "Promotion Ext",
+    "_postman_id": "promotion-ext-collection",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:9000" },
+    { "key": "token", "value": "" },
+    { "key": "config_id", "value": "" },
+    { "key": "rule_group_id", "value": "" },
+    { "key": "rule_id", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Promotion Ext Configs",
+      "item": [
+        {
+          "name": "List configs",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-configs",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-configs"],
+              "query": [
+                { "key": "limit", "value": "20", "disabled": true },
+                { "key": "offset", "value": "0", "disabled": true },
+                { "key": "promotion_id", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create config",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"promotion_id\": \"promo_01XXXXXXXXXXXXXXXXXX\",\n  \"auto_apply\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-configs",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-configs"]
+            }
+          }
+        },
+        {
+          "name": "Get config",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-configs/{{config_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-configs", "{{config_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Update config",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auto_apply\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-configs/{{config_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-configs", "{{config_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete config",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-configs/{{config_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-configs", "{{config_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Batch create configs",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"promotion_id\": \"promo_01XXXXXXXXXXXXXXXXXX\", \"auto_apply\": false },\n    { \"promotion_id\": \"promo_02XXXXXXXXXXXXXXXXXX\", \"auto_apply\": true }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-configs/batch",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-configs", "batch"]
+            }
+          }
+        },
+        {
+          "name": "Batch update configs",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"id\": \"pec_01XXXXXXXXXXXXXXXXXX\", \"auto_apply\": true }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-configs/batch",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-configs", "batch"]
+            }
+          }
+        },
+        {
+          "name": "Batch delete configs",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ids\": [\"pec_01XXXXXXXXXXXXXXXXXX\", \"pec_02XXXXXXXXXXXXXXXXXX\"]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-configs/batch",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-configs", "batch"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Promotion Ext Rule Groups",
+      "item": [
+        {
+          "name": "List rule groups",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-rule-groups",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-rule-groups"],
+              "query": [
+                { "key": "limit", "value": "20", "disabled": true },
+                { "key": "offset", "value": "0", "disabled": true },
+                { "key": "promotion_config_id", "value": "", "disabled": true },
+                { "key": "type", "value": "include", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create rule group",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"promotion_config_id\": \"{{config_id}}\",\n  \"type\": \"include\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-rule-groups",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-rule-groups"]
+            }
+          }
+        },
+        {
+          "name": "Get rule group",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-rule-groups/{{rule_group_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-rule-groups", "{{rule_group_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Update rule group",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"exclude\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-rule-groups/{{rule_group_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-rule-groups", "{{rule_group_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete rule group",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-rule-groups/{{rule_group_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-rule-groups", "{{rule_group_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Batch create rule groups",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"promotion_config_id\": \"{{config_id}}\", \"type\": \"include\" },\n    { \"promotion_config_id\": \"{{config_id}}\", \"type\": \"exclude\" }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-rule-groups/batch",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-rule-groups", "batch"]
+            }
+          }
+        },
+        {
+          "name": "Batch update rule groups",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"id\": \"perg_01XXXXXXXXXXXXXXXXXX\", \"type\": \"exclude\" }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-rule-groups/batch",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-rule-groups", "batch"]
+            }
+          }
+        },
+        {
+          "name": "Batch delete rule groups",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ids\": [\"perg_01XXXXXXXXXXXXXXXXXX\"]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-rule-groups/batch",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-rule-groups", "batch"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Promotion Ext Rules",
+      "item": [
+        {
+          "name": "List rules",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-rules",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-rules"],
+              "query": [
+                { "key": "limit", "value": "20", "disabled": true },
+                { "key": "offset", "value": "0", "disabled": true },
+                { "key": "rule_group_id", "value": "", "disabled": true },
+                { "key": "rule_type", "value": "comparison", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create rule",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rule_group_id\": \"{{rule_group_id}}\",\n  \"rule_type\": \"comparison\",\n  \"config\": {\n    \"field\": \"subtotal\",\n    \"operator\": \"gte\",\n    \"value\": 100\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-rules",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-rules"]
+            }
+          }
+        },
+        {
+          "name": "Get rule",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-rules/{{rule_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-rules", "{{rule_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Update rule",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rule_type\": \"comparison\",\n  \"config\": {\n    \"field\": \"subtotal\",\n    \"operator\": \"gt\",\n    \"value\": 200\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-rules/{{rule_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-rules", "{{rule_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete rule",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-rules/{{rule_id}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-rules", "{{rule_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Batch create rules",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"rule_group_id\": \"{{rule_group_id}}\",\n      \"rule_type\": \"comparison\",\n      \"config\": { \"field\": \"subtotal\", \"operator\": \"gte\", \"value\": 100 }\n    },\n    {\n      \"rule_group_id\": \"{{rule_group_id}}\",\n      \"rule_type\": \"comparison\",\n      \"config\": { \"field\": \"quantity\", \"operator\": \"gt\", \"value\": 2 }\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-rules/batch",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-rules", "batch"]
+            }
+          }
+        },
+        {
+          "name": "Batch update rules",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"id\": \"per_01XXXXXXXXXXXXXXXXXX\",\n      \"rule_type\": \"comparison\",\n      \"config\": { \"field\": \"subtotal\", \"operator\": \"gt\", \"value\": 500 }\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-rules/batch",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-rules", "batch"]
+            }
+          }
+        },
+        {
+          "name": "Batch delete rules",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ids\": [\"per_01XXXXXXXXXXXXXXXXXX\"]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/promotion-ext-rules/batch",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "promotion-ext-rules", "batch"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

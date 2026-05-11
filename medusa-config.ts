@@ -15,7 +15,7 @@ module.exports = defineConfig({
   },
   modules: [
     {
-      resolve: "./src/modules/threshold-promotion",
+      resolve: "./src/modules/promotion_ext",
     },
   ],
 })
