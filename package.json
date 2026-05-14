@@ -39,11 +39,13 @@
   "devDependencies": {
     "@medusajs/admin-sdk": "2.14.2",
     "@medusajs/cli": "2.14.2",
+    "@medusajs/dashboard": "2.14.2",
     "@medusajs/framework": "2.14.2",
     "@medusajs/icons": "2.14.2",
     "@medusajs/medusa": "2.14.2",
     "@medusajs/test-utils": "2.14.2",
     "@medusajs/ui": "4.1.9",
+    "@retailos-ai/rms-medusa-ui": "^1.2.1",
     "@swc/core": "^1.7.28",
     "@swc/jest": "^0.2.39",
     "@types/jest": "^30.0.0",
@@ -62,11 +64,13 @@
   "peerDependencies": {
     "@medusajs/admin-sdk": "2.14.2",
     "@medusajs/cli": "2.14.2",
+    "@medusajs/dashboard": "2.14.2",
     "@medusajs/framework": "2.14.2",
     "@medusajs/icons": "2.14.2",
     "@medusajs/medusa": "2.14.2",
     "@medusajs/test-utils": "2.14.2",
-    "@medusajs/ui": "4.1.9"
+    "@medusajs/ui": "4.1.9",
+    "@retailos-ai/rms-medusa-ui": "^1.2.1"
   },
   "engines": {
     "node": ">=20"
