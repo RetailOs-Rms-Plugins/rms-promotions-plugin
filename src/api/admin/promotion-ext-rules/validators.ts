@@ -11,11 +11,10 @@ const VALID_RULE_FIELDS = [
   "quantityOfProduct",
   "quantityOfCollection",
   "usesPerCustomer",
-  "customerGroup",
   "firstOrder",
 ] as const
 
-const VALID_OPERATORS = ["eq", "neq", "gt", "gte", "lt", "lte", "in", "nin"] as const
+const VALID_OPERATORS = ["eq", "neq", "gt", "gte", "lt", "lte"] as const
 
 const ComparisonConfigSchema = z
   .object({
@@ -55,12 +54,11 @@ const ComparisonConfigSchema = z
       })
     }
 
-    const arrayOnlyOperators = ["in", "nin"]
-    if (arrayOnlyOperators.includes(data.operator) && !Array.isArray(data.value)) {
+    if (data.field === "usesPerCustomer" && !["lt", "lte"].includes(data.operator)) {
       ctx.addIssue({
         code: "custom",
-        message: `operator "${data.operator}" requires an array value`,
-        path: ["value"],
+        message: `field "usesPerCustomer" only supports operators: lt, lte`,
+        path: ["operator"],
       })
     }
   })
@@ -136,7 +134,7 @@ export const AdminUpdatePromotionExtRuleSchema = z
 
 export const AdminUpdatePromotionExtRulesWorkflowInputSchema = z.object({
   items: z
-    .array(AdminUpdatePromotionExtRuleSchema.extend({ id: z.string().min(1) }))
+    .array(AdminUpdatePromotionExtRuleSchema.safeExtend({ id: z.string().min(1) }))
     .nonempty("at least one item is required"),
 })
 
