@@ -103,20 +103,20 @@
           "mappedType": "datetime"
         }
       },
-      "name": "promotion_ext_promotion_config",
+      "name": "promotion_ext_config",
       "schema": "public",
       "indexes": [
         {
-          "keyName": "IDX_promotion_ext_promotion_config_deleted_at",
+          "keyName": "IDX_promotion_ext_config_deleted_at",
           "columnNames": [],
           "composite": false,
           "constraint": false,
           "primary": false,
           "unique": false,
-          "expression": "CREATE INDEX IF NOT EXISTS \"IDX_promotion_ext_promotion_config_deleted_at\" ON \"promotion_ext_promotion_config\" (\"deleted_at\") WHERE deleted_at IS NULL"
+          "expression": "CREATE INDEX IF NOT EXISTS \"IDX_promotion_ext_config_deleted_at\" ON \"promotion_ext_config\" (\"deleted_at\") WHERE deleted_at IS NULL"
         },
         {
-          "keyName": "promotion_ext_promotion_config_pkey",
+          "keyName": "promotion_ext_config_pkey",
           "columnNames": [
             "id"
           ],
@@ -272,7 +272,7 @@
           "referencedColumnNames": [
             "id"
           ],
-          "referencedTableName": "public.promotion_ext_promotion_config",
+          "referencedTableName": "public.promotion_ext_config",
           "updateRule": "cascade"
         }
       },

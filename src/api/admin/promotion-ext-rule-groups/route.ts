@@ -9,7 +9,7 @@ import {
 import {
   createPromotionExtRuleGroupsWorkflow,
 } from "../../../workflows/promotion-ext"
-import { PROMOTION_EXT_RULE_GROUP_MODEL } from "../../../modules/promotion_ext/constants"
+import { PROMOTION_EXT_RULE_GROUP_MODEL } from "../../../modules/promotion-ext/constants"
 
 export const GET = async (
   req: MedusaRequest<AdminGetPromotionExtRuleGroupParams>,
