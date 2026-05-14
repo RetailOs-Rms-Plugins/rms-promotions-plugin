@@ -1,6 +1,6 @@
 import { createStep, StepResponse } from "@medusajs/framework/workflows-sdk"
-import { PROMOTION_EXT_MODULE } from "../../../../modules/promotion_ext"
-import PromotionExtModuleService from "../../../../modules/promotion_ext/service"
+import { PROMOTION_EXT_MODULE } from "../../../../modules/promotion-ext"
+import PromotionExtModuleService from "../../../../modules/promotion-ext/service"
 
 export const createPromotionExtRulesStepId = "create-promotion-ext-rules-step"
 

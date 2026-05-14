@@ -9,7 +9,7 @@ import {
   deletePromotionExtConfigsWorkflow,
   updatePromotionExtConfigsWorkflow,
 } from "../../../../workflows/promotion-ext"
-import { PROMOTION_EXT_CONFIG_MODEL } from "../../../../modules/promotion_ext/constants"
+import { PROMOTION_EXT_CONFIG_MODEL } from "../../../../modules/promotion-ext/constants"
 
 export const GET = async (
   req: MedusaRequest,

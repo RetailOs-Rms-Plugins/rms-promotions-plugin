@@ -12,7 +12,7 @@ import {
   deletePromotionExtRulesWorkflow,
   updatePromotionExtRulesWorkflow,
 } from "../../../../workflows/promotion-ext"
-import { PROMOTION_EXT_RULE_MODEL } from "../../../../modules/promotion_ext/constants"
+import { PROMOTION_EXT_RULE_MODEL } from "../../../../modules/promotion-ext/constants"
 
 export const POST = async (
   req: MedusaRequest<AdminBatchCreatePromotionExtRulePayload>,
