@@ -18,7 +18,7 @@ The plugin does **not** replace or modify Medusa's discount calculation. It only
 - `auto_apply` flag on `promotion_ext_config`: controls whether a promotion is auto-applied or code-only
 - Admin widget on the promotion detail page for rule management
 - Full REST API for rule CRUD
-- Include and exclude condition groups
+- Include condition groups (exclude groups: backend only, UI hidden — see Section 4.4)
 - All rule types listed in Section 4
 
 **Out of scope:**
@@ -41,13 +41,13 @@ The table below maps real merchant promotion descriptions to the Medusa-native c
 | Buy from Milk & Honey range → get miniature | BuyGet type + collection condition | None |
 | 2 units for ₪120 | BuyGet quantity | `quantityOfProduct gte 2` |
 | Reach ₪1,000 → get 5% discount | Percentage discount | `subtotal gte 1000` |
-| Second item at 50% discount | BuyGet, 50% on item 2 | `quantity gte 2` |
+| Second item at 50% discount | BuyGet, 50% on item 2 | `totalQuantity gte 2` |
 | 10% off on purchases over ₪300 | Percentage discount | `subtotal gte 300` |
 | Buy for ₪350 — pay only ₪299 | Fixed amount off | `subtotal gte 350` |
-| 3 + 1 on the cheapest item | BuyGet — cheapest free | `quantity gte 3` |
+| 3 + 1 on the cheapest item | BuyGet — cheapest free | `totalQuantity gte 3` |
 | 4 units for ₪32 | Fixed price adjustment | `quantityOfProduct gte 4` |
 
-**Observation:** the two custom rule types that cover all ten examples are `subtotal` and `quantity`/`quantityOfProduct`. The full rule set the plugin supports (Section 4) extends well beyond these to cover a broad range of real-world requirements.
+**Observation:** the two custom rule types that cover all ten examples are `subtotal` and `totalQuantity`/`quantityOfProduct`. The full rule set the plugin supports (Section 4) extends well beyond these to cover a broad range of real-world requirements.
 
 ---
 
@@ -92,7 +92,7 @@ Config shape:
 | `field` | Description | Valid `operator` values | `value` type | `scope` required? |
 |---|---|---|---|---|
 | `subtotal` | Cart item subtotal (pre-discount, pre-shipping). Maps to `item_subtotal` on the Medusa cart. **Implementer note:** may be a `BigNumber` — extract safely via `typeof val === 'number' ? val : val.toNumber()`. Verify field name against live cart shape. | `eq` `neq` `gt` `gte` `lt` `lte` | number | no |
-| `quantity` | Total item count in cart | `eq` `neq` `gt` `gte` `lt` `lte` | number | no |
+| `totalQuantity` | Total item count in cart | `eq` `neq` `gt` `gte` `lt` `lte` | number | no |
 | `quantityOfProduct` | Quantity of a specific product in cart | `eq` `neq` `gt` `gte` `lt` `lte` | number | `{ product_id }` |
 | `quantityOfCollection` | Quantity of items from a specific collection | `eq` `neq` `gt` `gte` `lt` `lte` | number | `{ collection_id }` |
 | `usesPerCustomer` | Times this customer has used this promotion (non-cancelled/refunded orders) | `lt` `lte` | number | no |
@@ -110,32 +110,48 @@ Config shape:
 
 > **Guest cart behavior (customer-dependent rules):** When the cart has no attached customer, `firstOrder` and `usesPerCustomer` rules both **pass** (optimistic/permissive). A guest has no order history to query — blocking them would be unfair. This is the same stance Medusa takes for its native customer group rules.
 
-> **Note on opposites:** Fields like `subtotal` and `quantity` express both minimum and maximum constraints via operators — `subtotal gte 100` sets a minimum; `subtotal lte 500` sets a maximum. No separate `minSubtotal`/`maxSubtotal` keys are needed.
+> **Note on opposites:** Fields like `subtotal` and `totalQuantity` express both minimum and maximum constraints via operators — `subtotal gte 100` sets a minimum; `subtotal lte 500` sets a maximum. No separate `minSubtotal`/`maxSubtotal` keys are needed.
 
-### 4.3 Rule Sets: ORs of ANDs
+### 4.3 Rule Sets: Configurable Combinators
 
-A promotion holds one or more **Rule Sets**. The logic is:
+A promotion holds one or more **Rule Sets**. The logical connective joining rules within a set, and the connective joining sets together, are both configurable per promotion via **Combinator** fields.
 
-- Rules **within** a Rule Set are joined by **AND** — all must pass
-- Rule Sets are joined by **OR** — if any set passes, the promotion is eligible
+**`rules_combinator`** (on each Rule Group — `"and"` | `"or"`, default `"and"`):
+- `"and"`: all rules in the group must pass
+- `"or"`: any rule in the group must pass
 
-This is Disjunctive Normal Form (DNF) — the same model used by Braze, Segment, and Shopify for their condition builders. It was chosen because merchants naturally think in scenarios ("apply if the customer does *this* OR *that*"), and each Rule Set represents one complete scenario.
+**`include_groups_combinator`** (on the promotion config — `"and"` | `"or"`, default `"or"`):
+- `"and"`: all include groups must pass
+- `"or"`: any include group must pass
 
-**Example — cart between ₪100 and ₪500:**
+The defaults (`"or"` between groups, `"and"` within groups) reproduce Disjunctive Normal Form (DNF) — the same model used by Braze, Segment, and Shopify. DNF is the natural default because merchants think in scenarios ("apply if the customer does *this* OR *that*"), with each Rule Set representing one complete scenario.
+
+**Example — cart between ₪100 and ₪500 (default combinators):**
 ```
-Rule Set 1: subtotal gte 100  AND  subtotal lte 500
+Rule Set 1 [rules_combinator: "and"]: subtotal gte 100  AND  subtotal lte 500
+include_groups_combinator: "or" (only one group, irrelevant)
 ```
 
-**Example — 4 shirts OR spend over ₪200:**
+**Example — 4 shirts OR spend over ₪200 (default combinators):**
 ```
 Rule Set 1: quantityOfProduct gte 4 (scope: shirt product)
-    OR
+    OR  ← include_groups_combinator: "or"
 Rule Set 2: subtotal gte 200
+```
+
+**Example — high-value AND loyal customer (custom combinators):**
+```
+include_groups_combinator: "and"
+Rule Set 1 [rules_combinator: "or"]: subtotal gte 500  OR  totalQuantity gte 10
+Rule Set 2 [rules_combinator: "and"]: usesPerCustomer lte 5  AND  firstOrder eq false
 ```
 
 Because this is one promotion with one discount, both conditions triggering simultaneously still results in a single discount application — no doubling.
 
 ### 4.4 Exclusion Rule Sets
+
+> **Status: Draft — not recommended for use. UI intentionally hidden.**
+> Exclusion rule groups are fully implemented in the backend and data model (`type: "exclude"` on `promotion_ext_rule_group`), but the admin UI exposes no way to create or edit them. They are accessible only through the API. This feature may be removed in a future version or promoted to full UI support depending on demand. Do not build production promotions that rely on exclude groups at this time.
 
 Inspired by Braze's exclusion group pattern, a promotion may also carry **Exclusion Rule Sets**. These work as AND NOT gates: if any exclusion set passes, the promotion is suppressed even if an include set also passes.
 
@@ -145,7 +161,7 @@ Include:  subtotal gte 300
 Exclude:  firstOrder eq true
 ```
 
-Exclusion sets use the same field/operator/value structure and the same AND-within/OR-between logic as include sets.
+Exclusion sets use the same field/operator/value structure as include sets. The combinator within an exclusion group is controlled by `rules_combinator` on the group (same field as include groups). The combinator between multiple exclusion groups is controlled by `exclude_groups_combinator` on `PromotionExtConfig` — also draft status, removable alongside the exclude groups feature.
 
 ### 4.5 `auto_apply` Flag
 
@@ -163,7 +179,9 @@ Each promotion managed by this plugin carries a **promotion-level boolean flag**
 **Why `is_automatic: false` on all managed promotions:**
 Medusa's native `is_automatic: true` flag makes it impossible to conditionally remove a promotion — `updateCartPromotionsWorkflow` re-applies automatic promotions even when called with action REMOVE. Therefore, all promotions managed by this plugin must be created with `is_automatic: false`. The plugin's own auto-apply engine (Layer 2) takes over this responsibility entirely for promotions where `auto_apply: true`.
 
-> **Operational constraint:** if a managed promotion is accidentally set to `is_automatic: true` in Medusa, it will be applied unconditionally by Medusa regardless of our rules. This is enforced at rule attachment time — `POST /admin/promotions/:id/rules` checks the promotion's `is_automatic` flag and rejects with HTTP 400 if it is `true`. Error message: *"This promotion must have is_automatic: false to use custom rules. Update the promotion in Medusa admin before attaching rules."*
+> **Operational constraint:** if a managed promotion is accidentally set to `is_automatic: true` in Medusa, it will be applied unconditionally by Medusa regardless of our rules.
+>
+> **Future hardening (not yet implemented):** enforce this at rule attachment time — `POST /admin/promotion-ext-configs` would query the promotion's `is_automatic` flag and reject with HTTP 400 if it is `true`. Suggested error message: *"This promotion must have is_automatic: false to use custom rules. Update the promotion in Medusa admin before attaching rules."* Until this guard is added, it is the merchant's responsibility to ensure managed promotions have `is_automatic: false`.
 
 ---
 
@@ -292,14 +310,17 @@ Three plugin-owned tables are introduced. This is the full Option B — chosen b
 
 ```
 promotion_ext_config
-  id                TEXT PK
-  promotion_id      TEXT UNIQUE  ← link to Medusa's promotion table
-  auto_apply        BOOLEAN DEFAULT false
+  id                          TEXT PK
+  promotion_id                TEXT UNIQUE  ← link to Medusa's promotion table
+  auto_apply                  BOOLEAN DEFAULT false
+  include_groups_combinator   TEXT ('and' | 'or') DEFAULT 'or'
+  exclude_groups_combinator   TEXT ('and' | 'or') DEFAULT 'or'   ← draft, removable with exclude feature
 
 promotion_ext_rule_group
   id                    TEXT PK
   promotion_config_id   TEXT     ← FK to promotion_ext_config.id
   type                  TEXT ('include' | 'exclude')
+  rules_combinator      TEXT ('and' | 'or') DEFAULT 'and'
 
 promotion_ext_rule
   id                TEXT PK
@@ -314,9 +335,9 @@ promotion_ext_rule
 - No many-to-many relationships anywhere
 
 **Logic encoded in the schema:**
-- Rules within a group are joined by **AND** — all must pass
-- Groups are joined by **OR** — any passing group makes the promotion eligible
-- `type = 'exclude'` groups act as AND NOT gates — if any exclude group passes, the promotion is suppressed
+- Rules within a group are joined by the group's `rules_combinator` (`"and"` by default — all must pass)
+- Include groups are joined by `include_groups_combinator` on the config (`"or"` by default — any passing group makes the promotion eligible)
+- `type = 'exclude'` groups act as NOT gates — if the exclusion condition passes (per `exclude_groups_combinator`), the promotion is suppressed even if an include group passes
 
 **Why `promotion_ext_config` exists:** `auto_apply` is a promotion-level flag, not a group-level flag. It needs a home separate from rule groups. This table also serves as the plugin's anchor for the Medusa link — Medusa owns `promotion`, the plugin owns `promotion_ext_config`.
 
@@ -341,7 +362,7 @@ The widget on the promotion page displays:
 
 ### 7.2 Rule Editor
 
-The rule editor uses **`RouteFocusModal`** from `@retailos-ai/rms-medusa-ui` (not exported by `@medusajs/ui`). FocusModal was chosen over Drawer because the rule editor layout — multiple groups each with `field / operator / value / scope` columns — needs horizontal space that a Drawer cannot provide.
+The rule editor opens in a **`Drawer`** from `@medusajs/ui`, controlled via `useState` in the widget. The widget intercepts `onOpenChange` to check for unsaved changes — if the form is dirty, a **`Prompt`** confirmation dialog ("Discard changes?") is shown before closing. This covers all close triggers: the header X button, ESC key, clicking the overlay, and the footer Cancel button.
 
 The editor follows the Medusa convention: `Header`, `Body`, and `Footer` (with Cancel and Save actions) using `react-hook-form` with field-level validation via its native `rules` prop.
 
@@ -355,25 +376,30 @@ The editor follows the Medusa convention: `Header`, `Body`, and `Footer` (with C
 │ ON: applied automatically when rules pass.           │
 │ OFF: requires promo code — rules still enforced.     │
 ├─────────────────────────────────────────────────────┤
-│ APPLY WHEN (include conditions)                      │
+│ APPLY WHEN    Groups match: [AND] [OR]  ←  segmented │
 │                                                      │
-│ ┌─ Condition Group 1 ──────────────────────────┐    │
-│ │ [subtotal ▼] [≥ ▼]  [300        ]       [×] │    │
-│ │ [subtotal ▼] [≤ ▼]  [500        ]       [×] │    │
-│ │ + Add rule                                   │    │
-│ └──────────────────────────────────────────────┘    │
+│ ┌─ Condition Group 1 ─── Rules match: [AND] [OR] ─┐ │
+│ │ [subtotal ▼] [≥ ▼]  [300        ]          [×] │ │
+│ │              — AND —                            │ │
+│ │ [subtotal ▼] [≤ ▼]  [500        ]          [×] │ │
+│ │ + Add rule                                      │ │
+│ └─────────────────────────────────────────────────┘ │
 │                    — OR —                            │
-│ ┌─ Condition Group 2 ──────────────────────────┐    │
-│ │ [quantityOfProduct ▼] [≥ ▼] [4] [shirt ▼] [×]│   │
-│ │ + Add rule                                   │    │
-│ └──────────────────────────────────────────────┘    │
+│ ┌─ Condition Group 2 ─── Rules match: [AND] [OR] ─┐ │
+│ │ [quantityOfProduct ▼] [≥ ▼] [4] [shirt ▼]  [×] │ │
+│ │ + Add rule                                      │ │
+│ └─────────────────────────────────────────────────┘ │
 │ + Add condition group                                │
-├─────────────────────────────────────────────────────┤
-│ EXCLUDE WHEN (AND NOT conditions) [collapsed ▼]      │
 ├─────────────────────────────────────────────────────┤
 │                  [Cancel]   [Save Rules]             │
 └─────────────────────────────────────────────────────┘
 ```
+
+**Combinator controls:**
+- **Drawer header** — "Groups match: [AND] [OR]" segmented control (Radix `ToggleGroup` wrapper). Controls `include_groups_combinator` on the promotion config.
+- **Group card header** — "Rules match: [AND] [OR]" segmented control. Controls `rules_combinator` on the group.
+- The AND/OR badges between items remain as read-only display — their label reflects the active combinator value.
+- `exclude_groups_combinator` has no UI control — API-only, consistent with the draft status of exclude groups.
 
 Each rule row contains:
 1. **Field dropdown** — data-type-aware; only shows valid fields
@@ -382,7 +408,7 @@ Each rule row contains:
 4. **Scope picker** (conditional) — appears only for `quantityOfProduct` and `quantityOfCollection`; opens a product/collection search modal
 5. **Delete row** button
 
-The exclude section is collapsed by default and expands on demand.
+The exclude section is intentionally hidden from the UI (see Section 4.4 — draft status). If a promotion has API-created exclude groups, they are displayed read-only in the widget summary but cannot be edited through the UI.
 
 ### Design Inspiration
 
@@ -468,7 +494,13 @@ The above reads as: *auto-apply when subtotal is between ₪300–₪500, EXCEPT
 Layer 1 and Layer 3 currently return hardcoded English error messages to the storefront. These are customer-facing. Localization and customization of these messages is **out of scope** for this version. If a future developer needs to make them configurable or translatable, the messages are centralized in the rule evaluation utility — that is the only file that needs to change.
 
 ### Performance at scale
-Layer 2 applies three DB-level filters on every fetch (`status`, date range, `auto_apply`) and a post-fetch application-level native rule filter (region, sales channel, currency, customer group). DB-level filtering by region and sales channel — which would push this narrowing into SQL — is deferred because those values are stored inside Medusa's conditions table, requiring a join. The currency DB-level filter is a near-term optimization pending verification that Medusa exposes currency at the top-level promotion field via its campaign relationship.
+Layer 2 applies one DB-level filter on every fetch (`auto_apply = true` on the plugin's own table). Status, date range, and native rule filters (region, sales channel, currency, customer group) are applied in application code after fetching matching promotions from Medusa by ID.
+
+**Why status and date range are not DB-level:** moving `status = "active"` and the date range into the Medusa query would prevent Layer 2 from seeing promotions that just became inactive — and therefore it would never queue their removal from carts where they are currently applied. Correctly handling this case would require a second query to fetch codes for filtered-out promotions, adding complexity without meaningful correctness gain. The current approach fetches only the auto-apply candidate set (already the largest reduction), then filters the rest in application code.
+
+**Why region and sales channel are not DB-level:** those values are stored inside Medusa's conditions table, requiring a join. Deferred until catalog size makes it necessary.
+
+**Currency DB-level filter (near-term):** filtering by `cart.currency_code` requires a join through the campaign relationship. Deferred pending verification that Medusa exposes currency at the top-level promotion field.
 
 If a promotion carries an exotic Medusa rule attribute beyond the four standard ones (region, sales channel, currency, customer group), the post-fetch native rule filter won't catch it. That promotion may be auto-applied with ₪0 discount. Mitigation: document the four supported attributes clearly for merchants; expand the filter if new Medusa rule types are introduced.
 
