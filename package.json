@@ -37,6 +37,7 @@
     "test:integration:http": "NODE_OPTIONS='--experimental-vm-modules' TEST_TYPE=integration:http jest"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.0",
     "@medusajs/admin-sdk": "2.14.2",
     "@medusajs/cli": "2.14.2",
     "@medusajs/dashboard": "2.14.2",
