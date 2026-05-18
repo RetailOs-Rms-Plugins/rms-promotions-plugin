@@ -26,7 +26,7 @@ export type ThresholdPromotionsResponse = {
 
 export type RuleField =
   | "subtotal"
-  | "quantity"
+  | "totalQuantity"
   | "quantityOfProduct"
   | "quantityOfCollection"
   | "usesPerCustomer"
@@ -53,10 +53,13 @@ export type PromotionExtRule = {
   updated_at: string
 }
 
+export type Combinator = "and" | "or"
+
 export type PromotionExtRuleGroup = {
   id: string
   promotion_config_id: string
   type: "include" | "exclude"
+  rules_combinator: Combinator
   created_at: string
   updated_at: string
 }
@@ -65,6 +68,8 @@ export type PromotionExtConfig = {
   id: string
   promotion_id: string
   auto_apply: boolean
+  include_groups_combinator: Combinator
+  exclude_groups_combinator: Combinator
   created_at: string
   updated_at: string
   rule_groups?: (PromotionExtRuleGroup & { rules: PromotionExtRule[] })[]
@@ -86,10 +91,12 @@ export type RuleFormRow = {
 
 export type RuleGroupFormRow = {
   type: "include" | "exclude"
+  rules_combinator: Combinator
   rules: RuleFormRow[]
 }
 
 export type RulesEditorFormValues = {
   auto_apply: boolean
+  include_groups_combinator: Combinator
   rule_groups: RuleGroupFormRow[]
 }

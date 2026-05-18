@@ -10,7 +10,7 @@ import {
 
 const FIELD_LABELS: Record<RuleField, string> = {
   subtotal: "Cart Subtotal",
-  quantity: "Quantity",
+  totalQuantity: "Total Quantity",
   quantityOfProduct: "Product Quantity",
   quantityOfCollection: "Collection Quantity",
   usesPerCustomer: "Uses Per Customer",

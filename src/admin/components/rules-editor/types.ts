@@ -1,6 +1,6 @@
-import type { ComparisonRuleConfig, RuleField, RuleOperator } from "../../../../lib/types"
+import type { ComparisonRuleConfig, Combinator, RuleField, RuleOperator } from "../../lib/types"
 
-export type { ComparisonRuleConfig, RuleField, RuleOperator }
+export type { ComparisonRuleConfig, Combinator, RuleField, RuleOperator }
 
 export type RuleRow = {
   serverId: string | null
@@ -11,11 +11,13 @@ export type RuleRow = {
 export type GroupRow = {
   serverId: string | null
   type: "include" | "exclude"
+  rules_combinator: Combinator
   rules: RuleRow[]
 }
 
 export type FormValues = {
   auto_apply: boolean
+  include_groups_combinator: Combinator
   groups: GroupRow[]
 }
 
