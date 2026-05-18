@@ -7,7 +7,7 @@ import { z } from "@medusajs/framework/zod"
 
 const VALID_RULE_FIELDS = [
   "subtotal",
-  "quantity",
+  "totalQuantity",
   "quantityOfProduct",
   "quantityOfCollection",
   "usesPerCustomer",

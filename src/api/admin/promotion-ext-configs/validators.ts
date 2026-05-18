@@ -18,9 +18,13 @@ export const AdminGetPromotionExtConfigsSchema = createFindParams({ offset: 0, l
 
 export const AdminGetPromotionExtConfigSchema = createSelectParams()
 
+const COMBINATORS = ["and", "or"] as const
+
 export const AdminCreatePromotionExtConfigSchema = z.object({
   promotion_id: z.string().min(1, "promotion_id is required"),
   auto_apply: z.boolean().optional().default(false),
+  include_groups_combinator: z.enum(COMBINATORS).optional().default("or"),
+  exclude_groups_combinator: z.enum(COMBINATORS).optional().default("or"),
 })
 
 export const AdminCreatePromotionExtConfigsWorkflowInputSchema = z.object({
@@ -29,6 +33,8 @@ export const AdminCreatePromotionExtConfigsWorkflowInputSchema = z.object({
 
 export const AdminUpdatePromotionExtConfigSchema = z.object({
   auto_apply: z.boolean().optional(),
+  include_groups_combinator: z.enum(COMBINATORS).optional(),
+  exclude_groups_combinator: z.enum(COMBINATORS).optional(),
 })
 
 export const AdminUpdatePromotionExtConfigsWorkflowInputSchema = z.object({
