@@ -6,6 +6,7 @@ import {
 import { z } from "@medusajs/framework/zod"
 
 const RULE_GROUP_TYPES = ["include", "exclude"] as const
+const COMBINATORS = ["and", "or"] as const
 
 export const AdminGetPromotionExtRuleGroupsSchema = createFindParams({ offset: 0, limit: 50 })
   .extend({
@@ -21,6 +22,7 @@ export const AdminGetPromotionExtRuleGroupSchema = createSelectParams()
 export const AdminCreatePromotionExtRuleGroupSchema = z.object({
   promotion_config_id: z.string().min(1, "promotion_config_id is required"),
   type: z.enum(RULE_GROUP_TYPES),
+  rules_combinator: z.enum(COMBINATORS).optional().default("and"),
 })
 
 export const AdminCreatePromotionExtRuleGroupsWorkflowInputSchema = z.object({
@@ -31,6 +33,7 @@ export const AdminCreatePromotionExtRuleGroupsWorkflowInputSchema = z.object({
 
 export const AdminUpdatePromotionExtRuleGroupSchema = z.object({
   type: z.enum(RULE_GROUP_TYPES).optional(),
+  rules_combinator: z.enum(COMBINATORS).optional(),
 })
 
 export const AdminUpdatePromotionExtRuleGroupsWorkflowInputSchema = z.object({

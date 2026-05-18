@@ -3,12 +3,13 @@ import { useFieldArray, Controller, Control, UseFormSetValue, useWatch } from "r
 import { Badge, Button, IconButton, Input, Select, Text } from "@medusajs/ui"
 import { Trash, XMarkMini, ChevronDown } from "@medusajs/icons"
 import { Fragment } from "react"
-import type { FormValues, RuleRow, RuleField, RuleOperator, ComparisonRuleConfig } from "../types"
-import { defaultRuleRow } from "../types"
+import type { FormValues, RuleRow, RuleField, RuleOperator, ComparisonRuleConfig } from "./types"
+import { defaultRuleRow } from "./types"
+import { CombinatorToggle } from "./combinator-toggle"
 
 const FIELD_OPTIONS: { value: RuleField; label: string }[] = [
   { value: "subtotal", label: "Cart Subtotal" },
-  { value: "quantity", label: "Quantity" },
+  { value: "totalQuantity", label: "Total Quantity" },
   { value: "quantityOfProduct", label: "Product Quantity" },
   { value: "quantityOfCollection", label: "Collection Quantity" },
   { value: "usesPerCustomer", label: "Uses Per Customer" },
@@ -63,7 +64,6 @@ const RuleRowFields = ({ groupIndex, ruleIndex, control, setValue, onRemove }: R
   return (
     <div className="bg-ui-bg-subtle border-ui-border-base flex flex-row gap-2 rounded-xl border px-2 py-2">
       <div className="grow">
-        {/* Field - full width */}
         <Controller
           control={control}
           name={`groups.${groupIndex}.rules.${ruleIndex}.config.field`}
@@ -89,7 +89,6 @@ const RuleRowFields = ({ groupIndex, ruleIndex, control, setValue, onRemove }: R
           )}
         />
 
-        {/* Operator + Value side by side */}
         <div className="flex gap-2">
           <Controller
             control={control}
@@ -158,7 +157,6 @@ const RuleRowFields = ({ groupIndex, ruleIndex, control, setValue, onRemove }: R
           />
         </div>
 
-        {/* Scope row (conditional) */}
         {(fieldValue === "quantityOfProduct" || fieldValue === "quantityOfCollection") && (
           <div className="mt-2">
             <Controller
@@ -210,7 +208,6 @@ const RuleRowFields = ({ groupIndex, ruleIndex, control, setValue, onRemove }: R
         )}
       </div>
 
-      {/* Delete button */}
       <div className="size-7 flex-none self-center">
         <IconButton size="small" variant="transparent" className="text-ui-fg-muted" type="button" onClick={onRemove}>
           <XMarkMini />
@@ -241,6 +238,8 @@ export const RuleGroupCard = ({
 }: RuleGroupCardProps) => {
   const [expanded, setExpanded] = useState(true)
 
+  const rulesCombinator = useWatch({ control, name: `groups.${groupIndex}.rules_combinator` })
+
   const { fields, append, remove } = useFieldArray({
     control,
     name: `groups.${groupIndex}.rules`,
@@ -256,9 +255,8 @@ export const RuleGroupCard = ({
 
   return (
     <div className="border-ui-border-base rounded-lg border flex flex-col gap-y-0 overflow-hidden">
-      <button
-        type="button"
-        className="flex items-center justify-between px-4 py-3 w-full text-left hover:bg-ui-bg-subtle-hover transition-colors"
+      <div
+        className="flex items-center justify-between px-4 py-3 w-full hover:bg-ui-bg-subtle-hover transition-colors cursor-pointer"
         onClick={() => setExpanded((v) => !v)}
       >
         <div className="flex items-center gap-x-2">
@@ -267,7 +265,16 @@ export const RuleGroupCard = ({
             <Badge size="2xsmall">{fields.length} {fields.length === 1 ? "rule" : "rules"}</Badge>
           )}
         </div>
-        <div className="flex items-center gap-x-1">
+        <div className="flex items-center gap-x-2">
+          <div onClick={(e) => e.stopPropagation()}>
+            <Controller
+              control={control}
+              name={`groups.${groupIndex}.rules_combinator`}
+              render={({ field: f }) => (
+                <CombinatorToggle value={f.value} onChange={f.onChange} />
+              )}
+            />
+          </div>
           <ChevronDown
             className={`text-ui-fg-subtle transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
           />
@@ -279,38 +286,38 @@ export const RuleGroupCard = ({
             <Trash className="text-ui-fg-subtle" />
           </IconButton>
         </div>
-      </button>
+      </div>
 
       {expanded && (
         <div className="px-4 pb-4 flex flex-col gap-y-0">
-      {fields.map((field, ruleIndex) => (
-        <Fragment key={field.id}>
-          <RuleRowFields
-            groupIndex={groupIndex}
-            ruleIndex={ruleIndex}
-            control={control}
-            setValue={setValue}
-            onRemove={() => handleRemoveRule(ruleIndex)}
-          />
+          {fields.map((field, ruleIndex) => (
+            <Fragment key={field.id}>
+              <RuleRowFields
+                groupIndex={groupIndex}
+                ruleIndex={ruleIndex}
+                control={control}
+                setValue={setValue}
+                onRemove={() => handleRemoveRule(ruleIndex)}
+              />
 
-          {ruleIndex < fields.length - 1 && (
-            <div className="relative px-6 py-3">
-              <div className="border-ui-border-strong absolute bottom-0 left-[40px] top-0 z-[-1] w-px bg-[linear-gradient(var(--border-strong)_33%,rgba(255,255,255,0)_0%)] bg-[length:1px_3px] bg-repeat-y" />
-              <Badge size="2xsmall">AND</Badge>
-            </div>
-          )}
-        </Fragment>
-      ))}
+              {ruleIndex < fields.length - 1 && (
+                <div className="relative px-6 py-3">
+                  <div className="border-ui-border-strong absolute bottom-0 left-[40px] top-0 z-[-1] w-px bg-[linear-gradient(var(--border-strong)_33%,rgba(255,255,255,0)_0%)] bg-[length:1px_3px] bg-repeat-y" />
+                  <Badge size="2xsmall">{(rulesCombinator ?? "and").toUpperCase()}</Badge>
+                </div>
+              )}
+            </Fragment>
+          ))}
 
-      <Button
-        variant="secondary"
-        size="small"
-        type="button"
-        className={`self-start ${fields.length > 0 ? "mt-4" : ""}`}
-        onClick={() => append(defaultRuleRow())}
-      >
-        Add rule
-      </Button>
+          <Button
+            variant="secondary"
+            size="small"
+            type="button"
+            className={`self-start ${fields.length > 0 ? "mt-4" : ""}`}
+            onClick={() => append(defaultRuleRow())}
+          >
+            Add rule
+          </Button>
         </div>
       )}
     </div>
