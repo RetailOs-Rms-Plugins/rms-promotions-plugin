@@ -1,5 +1,11 @@
 # @retailos-ai/rms-promotions-extension
 
+## 1.0.3
+
+### Patch Changes
+
+- e3d69fc: fix version @retailos-ai/rms-medusa-ui
+
 ## 1.0.2
 
 ### Patch Changes
