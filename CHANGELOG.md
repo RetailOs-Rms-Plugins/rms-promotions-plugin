@@ -1,5 +1,11 @@
 # @retailos-ai/rms-promotions-extension
 
+## 1.0.2
+
+### Patch Changes
+
+- 0b02b3f: update medusa version and combinators bugs fix
+
 ## 1.0.1
 
 ### Patch Changes
