@@ -5931,19 +5931,19 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@retailos-ai/rms-medusa-ui@npm:^1.2.1":
-  version: 1.2.1
-  resolution: "@retailos-ai/rms-medusa-ui@npm:1.2.1"
+"@retailos-ai/rms-medusa-ui@npm:^1.2.3":
+  version: 1.2.3
+  resolution: "@retailos-ai/rms-medusa-ui@npm:1.2.3"
   peerDependencies:
-    "@medusajs/framework": 2.14.2
-    "@medusajs/icons": 2.14.2
-    "@medusajs/ui": 4.1.9
+    "@medusajs/framework": 2.15.2
+    "@medusajs/icons": 2.15.2
+    "@medusajs/ui": 4.1.12
     motion: ^11.15.0
     react: ^18.3.1
     react-dom: ^18.3.1
     react-i18next: 13.5.0
     react-router-dom: 6.30.3
-  checksum: 10c0/3dda25fb6f8cee2b9615688543238dee8791ffd724f0179f74f5d2e9468520a62071c4f1330ff5ec979d4df49cd4ef884044ca0d0898f078697678e8a5e226f4
+  checksum: 10c0/347bafe93f9956812ea29650bf2c0c637b4771db8857e37168771690555d42ac777bf0cbccd5f1c8b930262e991e5b32770a903845a794679de69336ce08f9a8
   languageName: node
   linkType: hard
 
@@ -5960,7 +5960,7 @@ __metadata:
     "@medusajs/medusa": "npm:2.15.2"
     "@medusajs/test-utils": "npm:2.15.2"
     "@medusajs/ui": "npm:4.1.12"
-    "@retailos-ai/rms-medusa-ui": "npm:^1.2.1"
+    "@retailos-ai/rms-medusa-ui": "npm:^1.2.3"
     "@swc/core": "npm:^1.7.28"
     "@swc/jest": "npm:^0.2.39"
     "@types/jest": "npm:^30.0.0"
@@ -5984,7 +5984,7 @@ __metadata:
     "@medusajs/medusa": 2.15.2
     "@medusajs/test-utils": 2.15.2
     "@medusajs/ui": 4.1.12
-    "@retailos-ai/rms-medusa-ui": ^1.2.1
+    "@retailos-ai/rms-medusa-ui": ^1.2.3
   languageName: unknown
   linkType: soft
 
