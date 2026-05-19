@@ -1,5 +1,11 @@
 # @retailos-ai/rms-promotions-extension
 
+## 1.0.1
+
+### Patch Changes
+
+- d1ad099: add release skript
+
 ## 1.0.0
 
 ### Major Changes
