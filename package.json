@@ -34,7 +34,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:integration:modules": "NODE_OPTIONS='--experimental-vm-modules' TEST_TYPE=integration:modules jest",
-    "test:integration:http": "NODE_OPTIONS='--experimental-vm-modules' TEST_TYPE=integration:http jest"
+    "test:integration:http": "NODE_OPTIONS='--experimental-vm-modules' TEST_TYPE=integration:http jest",
+    "release": "changeset publish"
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.0",
