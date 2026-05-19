@@ -1,5 +1,6 @@
 import { Badge, Text, Tooltip } from "@medusajs/ui"
 import {
+  Combinator,
   ComparisonRuleConfig,
   PromotionExtConfig,
   PromotionExtRule,
@@ -84,12 +85,24 @@ function RuleBlock({ rule }: { rule: PromotionExtRule }) {
   )
 }
 
-function OrSeparator() {
+function GroupCombinatorSeparator({ combinator }: { combinator: Combinator }) {
+  return (
+    <div className="flex items-center gap-x-2 py-2">
+      <div className="w-8 h-px bg-ui-border-strong" />
+      <Badge size="2xsmall" className="shrink-0 font-semibold">
+        {combinator.toUpperCase()}
+      </Badge>
+      <div className="flex-1 h-px bg-ui-border-strong" />
+    </div>
+  )
+}
+
+function RuleCombinatorSeparator({ combinator }: { combinator: Combinator }) {
   return (
     <div className="flex items-center gap-x-3 py-1">
       <div className="flex-1 h-px bg-ui-border-base" />
       <Text size="xsmall" className="text-ui-fg-muted shrink-0">
-        OR
+        {combinator.toUpperCase()}
       </Text>
       <div className="flex-1 h-px bg-ui-border-base" />
     </div>
@@ -107,9 +120,12 @@ function RuleGroupBlock({
   if (groupRules.length === 0) return null
 
   return (
-    <div className="flex flex-col gap-2">
-      {groupRules.map((rule) => (
-        <RuleBlock key={rule.id} rule={rule} />
+    <div className="border-l-2 border-ui-border-interactive pl-3 flex flex-col gap-1">
+      {groupRules.map((rule, idx) => (
+        <div key={rule.id}>
+          {idx > 0 && <RuleCombinatorSeparator combinator={group.rules_combinator ?? "and"} />}
+          <RuleBlock rule={rule} />
+        </div>
       ))}
     </div>
   )
@@ -119,10 +135,12 @@ function GroupSection({
   label,
   groups,
   rules,
+  groupsCombinator,
 }: {
   label: string
   groups: PromotionExtRuleGroup[]
   rules: PromotionExtRule[]
+  groupsCombinator: Combinator
 }) {
   const nonEmpty = groups.filter((g) =>
     rules.some((r) => r.rule_group_id === g.id)
@@ -138,10 +156,10 @@ function GroupSection({
       >
         {label}
       </Text>
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col">
         {nonEmpty.map((group, idx) => (
           <div key={group.id}>
-            {idx > 0 && <OrSeparator />}
+            {idx > 0 && <GroupCombinatorSeparator combinator={groupsCombinator} />}
             <RuleGroupBlock group={group} rules={rules} />
           </div>
         ))}
@@ -178,13 +196,19 @@ export function renderRulesDisplay(
   return (
     <div className="space-y-4">
       {hasInclude && (
-        <GroupSection label="Apply When" groups={includeGroups} rules={rules} />
+        <GroupSection
+          label="Apply When"
+          groups={includeGroups}
+          rules={rules}
+          groupsCombinator={config.include_groups_combinator ?? "or"}
+        />
       )}
       {hasExclude && (
         <GroupSection
           label="Exclude When"
           groups={excludeGroups}
           rules={rules}
+          groupsCombinator={config.exclude_groups_combinator ?? "or"}
         />
       )}
     </div>
