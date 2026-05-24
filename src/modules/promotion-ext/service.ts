@@ -1,5 +1,6 @@
 import { MedusaService } from "@medusajs/framework/utils"
 import {
+  CartExtAdjustment,
   PromotionExtConfig,
   PromotionExtRule,
   PromotionExtRuleGroup,
@@ -9,6 +10,7 @@ class PromotionExtModuleService extends MedusaService({
   PromotionExtConfig,
   PromotionExtRuleGroup,
   PromotionExtRule,
+  CartExtAdjustment,
 }) {}
 
 export default PromotionExtModuleService

@@ -1,10 +1,11 @@
 import type { SubscriberArgs, SubscriberConfig } from "@medusajs/framework"
 import { updateCartPromotionsWorkflow } from "@medusajs/medusa/core-flows"
-import { ContainerRegistrationKeys, PromotionActions } from "@medusajs/framework/utils"
+import { ContainerRegistrationKeys, Modules, PromotionActions } from "@medusajs/framework/utils"
 import { PROMOTION_EXT_MODULE } from "../modules/promotion-ext"
 import type PromotionExtModuleService from "../modules/promotion-ext/service"
 import { evaluatePromotion } from "../lib/rule-evaluator"
 import { buildEnrichedCart, loadConfigShape, passesNativeRules } from "../lib/cart-enricher"
+import { spreadCartAdjustment } from "../lib/adjustment-spread"
 
 const LOG = "[Layer2/cart-updated]"
 
@@ -143,6 +144,55 @@ export default async function cartUpdatedHandler({
     await updateCartPromotionsWorkflow(container).run({
       input: { cart_id: cartId, promo_codes: actualToRemove, action: PromotionActions.REMOVE },
     })
+  }
+
+  // Re-apply custom adjustments (ADR-0005: re-apply after wipe)
+  const cartExtAdjustments = await service.listCartExtAdjustments({ cart_id: cartId })
+
+  if (cartExtAdjustments.length) {
+    const cartModule = container.resolve(Modules.CART)
+    const allAdjustmentsToApply: { item_id: string; code: string; amount: number; description?: string; promotion_id?: string; provider_id?: string }[] = []
+
+    const itemSpecific = cartExtAdjustments.filter((adj: any) => adj.item_id)
+    for (const adj of itemSpecific) {
+      allAdjustmentsToApply.push({
+        item_id: (adj as any).item_id,
+        code: (adj as any).code,
+        amount: typeof (adj as any).amount === "number" ? (adj as any).amount : Number((adj as any).amount),
+        description: (adj as any).description ?? undefined,
+        promotion_id: (adj as any).promotion_id ?? undefined,
+        provider_id: (adj as any).provider_id ?? undefined,
+      })
+    }
+
+    const cartWide = cartExtAdjustments.filter((adj: any) => !(adj as any).item_id)
+    if (cartWide.length) {
+      const fullCart = await cartModule.retrieveCart(cartId, { relations: ["items"] })
+      const cartItems = (fullCart.items ?? []).map((item: any) => ({
+        id: item.id,
+        subtotal: typeof item.subtotal === "number" ? item.subtotal : Number(item.subtotal ?? 0),
+      }))
+
+      for (const adj of cartWide) {
+        const amount = typeof (adj as any).amount === "number" ? (adj as any).amount : Number((adj as any).amount)
+        const spread = spreadCartAdjustment(amount, cartItems)
+        for (const s of spread) {
+          allAdjustmentsToApply.push({
+            item_id: s.item_id,
+            code: (adj as any).code,
+            amount: s.amount,
+            description: (adj as any).description ?? undefined,
+            promotion_id: (adj as any).promotion_id ?? undefined,
+            provider_id: (adj as any).provider_id ?? undefined,
+          })
+        }
+      }
+    }
+
+    if (allAdjustmentsToApply.length) {
+      await cartModule.addLineItemAdjustments(cartId, allAdjustmentsToApply)
+      console.log(`${LOG} re-applied ${allAdjustmentsToApply.length} custom adjustment(s) (${itemSpecific.length} item-specific, ${cartWide.length} cart-wide)`)
+    }
   }
 
   console.log(`${LOG} done`)
