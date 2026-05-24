@@ -4,6 +4,8 @@ export interface AdminPromotionExtConfig {
   id: string
   promotion_id: string
   auto_apply: boolean
+  promotion_mode: string
+  mode_config: Record<string, unknown> | null
   created_at: Date
   updated_at: Date
   deleted_at: Date | null
