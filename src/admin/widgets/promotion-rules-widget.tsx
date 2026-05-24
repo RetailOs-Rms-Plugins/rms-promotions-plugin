@@ -6,6 +6,8 @@ import { EllipsisHorizontal, InformationCircle, PencilSquare } from "@medusajs/i
 import { usePromotionExtConfig } from "../hooks"
 import { renderRulesDisplay } from "./rule-display"
 import { RulesEditorForm } from "../components/rules-editor/rules-editor-form"
+import { PromotionModeDisplay } from "../components/promotion-mode/promotion-mode-display"
+import { PromotionModeForm } from "../components/promotion-mode/promotion-mode-form"
 
 type AdminPromotion = { id: string }
 
@@ -32,6 +34,10 @@ const PromotionRulesWidget = ({ data }: DetailWidgetProps<AdminPromotion>) => {
   const [confirmClose, setConfirmClose] = useState(false)
   const isDirtyRef = useRef(false)
 
+  const [modeOpen, setModeOpen] = useState(false)
+  const [modeConfirmClose, setModeConfirmClose] = useState(false)
+  const modeDirtyRef = useRef(false)
+
   const { config, isLoading } = usePromotionExtConfig(data.id)
   const ruleGroups = config?.rule_groups ?? []
   const rules = ruleGroups.flatMap((g) => g.rules ?? [])
@@ -49,6 +55,19 @@ const PromotionRulesWidget = ({ data }: DetailWidgetProps<AdminPromotion>) => {
   const handleConfirmedClose = () => {
     setConfirmClose(false)
     setOpen(false)
+  }
+
+  const handleModeOpenChange = (next: boolean) => {
+    if (!next && modeDirtyRef.current) {
+      setModeConfirmClose(true)
+      return
+    }
+    setModeOpen(next)
+  }
+
+  const handleModeConfirmedClose = () => {
+    setModeConfirmClose(false)
+    setModeOpen(false)
   }
 
   return (
@@ -144,6 +163,82 @@ const PromotionRulesWidget = ({ data }: DetailWidgetProps<AdminPromotion>) => {
               Cancel
             </Prompt.Cancel>
             <Prompt.Action onClick={handleConfirmedClose}>
+              Discard
+            </Prompt.Action>
+          </Prompt.Footer>
+        </Prompt.Content>
+      </Prompt>
+
+      {/* Promotion Mode Section */}
+      <Drawer open={modeOpen} onOpenChange={handleModeOpenChange}>
+        <Container className="divide-y p-0">
+          <div className="flex items-center justify-between px-6 py-4">
+            <Heading level="h2">How is the discount calculated?</Heading>
+            {config && (
+              <DropdownMenu>
+                <DropdownMenu.Trigger asChild>
+                  <IconButton variant="transparent">
+                    <EllipsisHorizontal />
+                  </IconButton>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Content>
+                  <DropdownMenu.Item
+                    className="gap-x-2"
+                    onClick={() => setModeOpen(true)}
+                  >
+                    <PencilSquare className="text-ui-fg-subtle" />
+                    Edit
+                  </DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu>
+            )}
+          </div>
+
+          {!isLoading && config && (
+            <div className="px-6 py-4">
+              <PromotionModeDisplay
+                mode={config.promotion_mode ?? "standard"}
+                modeConfig={config.mode_config ?? null}
+              />
+            </div>
+          )}
+
+          {!isLoading && !config && (
+            <div className="px-6 py-4">
+              <Text size="small" className="text-ui-fg-muted">
+                Create a promotion config first to configure the promotion mode.
+              </Text>
+            </div>
+          )}
+        </Container>
+
+        <Drawer.Content>
+          {modeOpen && config && (
+            <PromotionModeForm
+              configId={config.id}
+              promotionId={data.id}
+              currentMode={config.promotion_mode ?? "standard"}
+              currentModeConfig={config.mode_config ?? null}
+              onClose={() => setModeOpen(false)}
+              isDirtyRef={modeDirtyRef}
+            />
+          )}
+        </Drawer.Content>
+      </Drawer>
+
+      <Prompt open={modeConfirmClose} variant="confirmation" onOpenChange={setModeConfirmClose}>
+        <Prompt.Content>
+          <Prompt.Header>
+            <Prompt.Title>Unsaved changes</Prompt.Title>
+            <Prompt.Description>
+              You have unsaved changes. Are you sure you want to discard them?
+            </Prompt.Description>
+          </Prompt.Header>
+          <Prompt.Footer>
+            <Prompt.Cancel onClick={() => setModeConfirmClose(false)}>
+              Cancel
+            </Prompt.Cancel>
+            <Prompt.Action onClick={handleModeConfirmedClose}>
               Discard
             </Prompt.Action>
           </Prompt.Footer>
