@@ -4,6 +4,8 @@ export const defaultAdminPromotionExtConfigFields = [
   "auto_apply",
   "include_groups_combinator",
   "exclude_groups_combinator",
+  "promotion_mode",
+  "mode_config",
   "created_at",
   "updated_at",
   "deleted_at",
