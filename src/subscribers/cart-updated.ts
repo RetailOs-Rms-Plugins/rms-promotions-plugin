@@ -1,6 +1,6 @@
 import type { SubscriberArgs, SubscriberConfig } from "@medusajs/framework"
 import { updateCartPromotionsWorkflow } from "@medusajs/medusa/core-flows"
-import { ContainerRegistrationKeys, PromotionActions } from "@medusajs/framework/utils"
+import { ContainerRegistrationKeys, Modules, PromotionActions } from "@medusajs/framework/utils"
 import { PROMOTION_EXT_MODULE } from "../modules/promotion-ext"
 import type PromotionExtModuleService from "../modules/promotion-ext/service"
 import { evaluatePromotion } from "../lib/rule-evaluator"
@@ -143,6 +143,28 @@ export default async function cartUpdatedHandler({
     await updateCartPromotionsWorkflow(container).run({
       input: { cart_id: cartId, promo_codes: actualToRemove, action: PromotionActions.REMOVE },
     })
+  }
+
+  // Re-apply custom adjustments (ADR-0005: re-apply after wipe)
+  const cartExtAdjustments = await service.listCartExtAdjustments({ cart_id: cartId })
+
+  if (cartExtAdjustments.length) {
+    const itemAdjustments = cartExtAdjustments
+      .filter((adj: any) => adj.item_id)
+      .map((adj: any) => ({
+        item_id: adj.item_id,
+        code: adj.code,
+        amount: typeof adj.amount === "number" ? adj.amount : Number(adj.amount),
+        description: adj.description ?? undefined,
+        promotion_id: adj.promotion_id ?? undefined,
+        provider_id: adj.provider_id ?? undefined,
+      }))
+
+    if (itemAdjustments.length) {
+      const cartModule = container.resolve(Modules.CART)
+      await cartModule.addLineItemAdjustments(cartId, itemAdjustments)
+      console.log(`${LOG} re-applied ${itemAdjustments.length} custom adjustment(s)`)
+    }
   }
 
   console.log(`${LOG} done`)

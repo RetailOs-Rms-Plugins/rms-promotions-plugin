@@ -156,9 +156,13 @@ All endpoints are admin-authenticated only. No store-scoped endpoints exist.
 | Method | Endpoint | Purpose |
 |---|---|---|
 | `GET` | `/admin/cart-adjustments/:cart_id` | List all `CartExtAdjustment` rows for a cart. Supports `?source=manual` filter. Returns all sources by default. |
+| `GET` | `/admin/cart-adjustments/:cart_id/:id` | Retrieve a single `CartExtAdjustment` by ID. |
 | `POST` | `/admin/cart-adjustments/:cart_id` | Create a manual adjustment. Auto-sets `source: "manual"`, `code: "MANUAL_<id>"`, `promotion_id: null`. |
-| `PATCH` | `/admin/cart-adjustments/:id` | Update a manual adjustment. Restricted to `source: "manual"` — returns 400 for engine-computed rows. |
-| `DELETE` | `/admin/cart-adjustments/:id` | Delete a manual adjustment. Restricted to `source: "manual"` — returns 400 for engine-computed rows. |
+| `PATCH` | `/admin/cart-adjustments/:cart_id/:id` | Update a manual adjustment. Restricted to `source: "manual"` — returns 400 for engine-computed rows. |
+| `DELETE` | `/admin/cart-adjustments/:cart_id/:id` | Delete a manual adjustment. Restricted to `source: "manual"` — returns 400 for engine-computed rows. |
+| `POST` | `/admin/cart-adjustments/:cart_id/batch` | Batch create manual adjustments `{ items: [...] }`. |
+| `PATCH` | `/admin/cart-adjustments/:cart_id/batch` | Batch update manual adjustments `{ items: [{ id, ...fields }] }`. |
+| `DELETE` | `/admin/cart-adjustments/:cart_id/batch` | Batch delete manual adjustments `{ ids: string[] }`. |
 
 **POST body:**
 ```ts
