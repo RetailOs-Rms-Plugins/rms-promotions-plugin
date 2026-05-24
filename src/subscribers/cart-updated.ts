@@ -6,6 +6,8 @@ import type PromotionExtModuleService from "../modules/promotion-ext/service"
 import { evaluatePromotion } from "../lib/rule-evaluator"
 import { buildEnrichedCart, loadConfigShape, passesNativeRules } from "../lib/cart-enricher"
 import { spreadCartAdjustment } from "../lib/adjustment-spread"
+import { computeBundle, computeBuyGetRepeat } from "../lib/adjustment-calculator"
+import { filterEligibleItems, type CartItemForTargetRules } from "../lib/target-rule-evaluator"
 
 const LOG = "[Layer2/cart-updated]"
 
@@ -144,6 +146,128 @@ export default async function cartUpdatedHandler({
     await updateCartPromotionsWorkflow(container).run({
       input: { cart_id: cartId, promo_codes: actualToRemove, action: PromotionActions.REMOVE },
     })
+  }
+
+  // Compute bundle/buyget_repeat adjustments for non-standard promotions
+  const appliedPromotionCodes = [...appliedCodes, ...actualToAdd]
+  const allConfigs = await service.listPromotionExtConfigs({})
+  const nonStandardConfigs = allConfigs.filter(
+    (c: any) => c.promotion_mode && c.promotion_mode !== "standard"
+  )
+
+  if (nonStandardConfigs.length) {
+    const { data: appliedPromos } = await query.graph({
+      entity: "promotion",
+      fields: [
+        "id",
+        "code",
+        "application_method.target_rules.attribute",
+        "application_method.target_rules.operator",
+        "application_method.target_rules.values.value",
+      ],
+      filters: { id: nonStandardConfigs.map((c: any) => c.promotion_id) },
+    })
+
+    const cartModule = container.resolve(Modules.CART)
+    const fullCart = await cartModule.retrieveCart(cartId, {
+      relations: ["items"],
+    })
+
+    const { data: cartWithProducts } = await query.graph({
+      entity: "cart",
+      fields: [
+        "items.id",
+        "items.unit_price",
+        "items.quantity",
+        "items.product_id",
+        "items.product.collection_id",
+        "items.product.categories.id",
+        "items.product.type_id",
+        "items.product.tags.id",
+      ],
+      filters: { id: cartId },
+    })
+
+    const cartItems: CartItemForTargetRules[] = (cartWithProducts[0]?.items ?? []).map((item: any) => ({
+      id: item.id,
+      product_id: item.product_id,
+      product: item.product ?? {},
+    }))
+
+    for (const cfg of nonStandardConfigs) {
+      const promo = appliedPromos.find((p: any) => p.id === (cfg as any).promotion_id)
+      if (!promo) continue
+
+      const isApplied = appliedPromotionCodes.includes(promo.code)
+      if (!isApplied) {
+        // Promotion not on cart — clean up any stale engine rows
+        const staleRows = await service.listCartExtAdjustments({
+          cart_id: cartId,
+          promotion_id: (cfg as any).promotion_id,
+        })
+        if (staleRows.length) {
+          await service.deleteCartExtAdjustments(staleRows.map((r: any) => r.id))
+          console.log(`${LOG} cleaned up ${staleRows.length} stale ${(cfg as any).promotion_mode} adjustment(s) for removed promotion "${promo.code}"`)
+        }
+        continue
+      }
+
+      const targetRules = ((promo as any).application_method?.target_rules ?? []).map((r: any) => ({
+        attribute: r.attribute,
+        operator: r.operator,
+        values: (r.values ?? []).map((v: any) => v.value ?? v),
+      }))
+
+      const eligibleItems = filterEligibleItems(cartItems, targetRules)
+
+      const eligibleWithPrices = eligibleItems.map((ei) => {
+        const cartItem = (cartWithProducts[0]?.items ?? []).find((i: any) => i.id === ei.id)
+        return {
+          id: ei.id,
+          unit_price: typeof cartItem?.unit_price === "number" ? cartItem.unit_price : Number(cartItem?.unit_price ?? 0),
+          quantity: typeof cartItem?.quantity === "number" ? cartItem.quantity : Number(cartItem?.quantity ?? 0),
+        }
+      })
+
+      const modeConfig = (cfg as any).mode_config
+      const promotionMode = (cfg as any).promotion_mode as string
+
+      let computedGroup: { promotion_id: string; adjustments: { item_id: string; amount: number }[] }
+
+      if (promotionMode === "bundle") {
+        computedGroup = computeBundle((cfg as any).promotion_id, eligibleWithPrices, modeConfig)
+      } else if (promotionMode === "buyget_repeat") {
+        computedGroup = computeBuyGetRepeat((cfg as any).promotion_id, eligibleWithPrices, modeConfig)
+      } else {
+        continue
+      }
+
+      // Delete old engine rows for this promotion
+      const oldRows = await service.listCartExtAdjustments({
+        cart_id: cartId,
+        promotion_id: (cfg as any).promotion_id,
+        source: promotionMode,
+      })
+      if (oldRows.length) {
+        await service.deleteCartExtAdjustments(oldRows.map((r: any) => r.id))
+      }
+
+      // Write new engine rows
+      if (computedGroup.adjustments.length) {
+        await service.createCartExtAdjustments(
+          computedGroup.adjustments.map((adj) => ({
+            cart_id: cartId,
+            item_id: adj.item_id,
+            amount: adj.amount,
+            code: `${promotionMode.toUpperCase()}_${promo.code}`,
+            source: promotionMode,
+            promotion_id: (cfg as any).promotion_id,
+            description: `${promotionMode === "bundle" ? "Bundle" : "Buy-get repeat"} promotion: ${promo.code}`,
+          }))
+        )
+        console.log(`${LOG} computed ${computedGroup.adjustments.length} ${promotionMode} adjustment(s) for "${promo.code}"`)
+      }
+    }
   }
 
   // Re-apply custom adjustments (ADR-0005: re-apply after wipe)
