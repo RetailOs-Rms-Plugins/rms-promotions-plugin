@@ -1,5 +1,5 @@
 export interface AdminCreateCartExtAdjustmentPayload {
-  item_id: string
+  item_id?: string | null
   amount: number
   description?: string
   is_tax_inclusive?: boolean

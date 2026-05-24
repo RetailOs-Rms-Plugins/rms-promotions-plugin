@@ -18,7 +18,7 @@ export const AdminGetCartExtAdjustmentsSchema = createFindParams({ offset: 0, li
 export const AdminGetCartExtAdjustmentSchema = createSelectParams()
 
 export const AdminCreateCartExtAdjustmentSchema = z.object({
-  item_id: z.string().min(1, "item_id is required"),
+  item_id: z.string().min(1).nullable().optional(),
   amount: z.number({ message: "amount is required" }),
   description: z.string().optional(),
   is_tax_inclusive: z.boolean().optional().default(false),

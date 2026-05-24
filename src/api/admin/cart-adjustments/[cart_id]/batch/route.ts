@@ -24,7 +24,7 @@ export const POST = async (
 
   const workflowItems = req.validatedBody.items.map((item) => ({
     cart_id,
-    item_id: item.item_id,
+    item_id: item.item_id ?? null,
     amount: item.amount,
     source: "manual",
     code: null,

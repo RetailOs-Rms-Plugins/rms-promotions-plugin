@@ -9,6 +9,7 @@ import {
 import { createCartExtAdjustmentsWorkflow } from "../../../../workflows/promotion-ext"
 import { CART_EXT_ADJUSTMENT_MODEL, PROMOTION_EXT_MODULE } from "../../../../modules/promotion-ext/constants"
 import type PromotionExtModuleService from "../../../../modules/promotion-ext/service"
+import { spreadCartAdjustment } from "../../../../lib/adjustment-spread"
 
 export const GET = async (
   req: MedusaRequest<AdminGetCartExtAdjustmentParams>,
@@ -54,7 +55,7 @@ export const POST = async (
       items: [
         {
           cart_id,
-          item_id,
+          item_id: item_id ?? null,
           amount,
           source: "manual",
           code: null,
@@ -74,16 +75,30 @@ export const POST = async (
   await service.updateCartExtAdjustments([{ id: created.id, code }])
 
   const cartModule = req.scope.resolve(Modules.CART)
-  await cartModule.addLineItemAdjustments(cart_id, [
-    {
-      item_id,
-      code,
-      amount,
-      description: description ?? undefined,
-      promotion_id: undefined,
-      provider_id: undefined,
-    },
-  ])
+
+  if (item_id) {
+    await cartModule.addLineItemAdjustments(cart_id, [
+      {
+        item_id,
+        code,
+        amount,
+        description: description ?? undefined,
+      },
+    ])
+  } else {
+    const cart = await cartModule.retrieveCart(cart_id, { relations: ["items"] })
+    const cartItems = (cart.items ?? []).map((item: any) => ({
+      id: item.id,
+      subtotal: typeof item.subtotal === "number" ? item.subtotal : Number(item.subtotal ?? 0),
+    }))
+    const spread = spreadCartAdjustment(amount, cartItems)
+    if (spread.length) {
+      await cartModule.addLineItemAdjustments(
+        cart_id,
+        spread.map((s) => ({ item_id: s.item_id, code, amount: s.amount, description: description ?? undefined }))
+      )
+    }
+  }
 
   const {
     data: [cart_ext_adjustment],
