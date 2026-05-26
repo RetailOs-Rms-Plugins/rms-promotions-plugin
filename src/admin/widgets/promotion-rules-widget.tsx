@@ -3,13 +3,21 @@ import { defineWidgetConfig } from "@medusajs/admin-sdk"
 import { DetailWidgetProps } from "@medusajs/types"
 import { Badge, Container, Drawer, DropdownMenu, Heading, IconButton, Prompt, Text, Tooltip } from "@medusajs/ui"
 import { EllipsisHorizontal, InformationCircle, PencilSquare } from "@medusajs/icons"
-import { usePromotionExtConfig } from "../hooks"
+import { usePromotionExtConfig, useCreatePromotionExtConfig } from "../hooks"
 import { renderRulesDisplay } from "./rule-display"
 import { RulesEditorForm } from "../components/rules-editor/rules-editor-form"
 import { PromotionModeDisplay } from "../components/promotion-mode/promotion-mode-display"
 import { PromotionModeForm } from "../components/promotion-mode/promotion-mode-form"
 
-type AdminPromotion = { id: string }
+type AdminPromotion = {
+  id: string
+  application_method?: {
+    type?: string
+    value?: number
+    target_type?: string
+    max_quantity?: number | null
+  }
+}
 
 const EmptyRules = ({ onAdd }: { onAdd: () => void }) => (
   <div className="flex flex-col items-center gap-y-2 py-8 text-center">
@@ -39,10 +47,18 @@ const PromotionRulesWidget = ({ data }: DetailWidgetProps<AdminPromotion>) => {
   const modeDirtyRef = useRef(false)
 
   const { config, isLoading } = usePromotionExtConfig(data.id)
+  const { mutateAsync: createConfig, isPending: isCreatingConfig } = useCreatePromotionExtConfig()
   const ruleGroups = config?.rule_groups ?? []
   const rules = ruleGroups.flatMap((g) => g.rules ?? [])
 
   const hasRules = rules.length > 0
+
+  const handleModeEditClick = async () => {
+    if (!config && !isCreatingConfig) {
+      await createConfig({ promotion_id: data.id })
+    }
+    setModeOpen(true)
+  }
 
   const handleOpenChange = (next: boolean) => {
     if (!next && isDirtyRef.current) {
@@ -173,42 +189,31 @@ const PromotionRulesWidget = ({ data }: DetailWidgetProps<AdminPromotion>) => {
       <Drawer open={modeOpen} onOpenChange={handleModeOpenChange}>
         <Container className="divide-y p-0">
           <div className="flex items-center justify-between px-6 py-4">
-            <Heading level="h2">How is the discount calculated?</Heading>
-            {config && (
-              <DropdownMenu>
-                <DropdownMenu.Trigger asChild>
-                  <IconButton variant="transparent">
-                    <EllipsisHorizontal />
-                  </IconButton>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Content>
-                  <DropdownMenu.Item
-                    className="gap-x-2"
-                    onClick={() => setModeOpen(true)}
-                  >
-                    <PencilSquare className="text-ui-fg-subtle" />
-                    Edit
-                  </DropdownMenu.Item>
-                </DropdownMenu.Content>
-              </DropdownMenu>
-            )}
+            <Heading level="h2">How is the discount applied?</Heading>
+            <DropdownMenu>
+              <DropdownMenu.Trigger asChild>
+                <IconButton variant="transparent">
+                  <EllipsisHorizontal />
+                </IconButton>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Content>
+                <DropdownMenu.Item
+                  className="gap-x-2"
+                  onClick={handleModeEditClick}
+                >
+                  <PencilSquare className="text-ui-fg-subtle" />
+                  Edit
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu>
           </div>
 
-          {!isLoading && config && (
-            <div className="px-6 py-4">
-              <PromotionModeDisplay
-                mode={config.promotion_mode ?? "standard"}
-                modeConfig={config.mode_config ?? null}
-              />
-            </div>
-          )}
-
-          {!isLoading && !config && (
-            <div className="px-6 py-4">
-              <Text size="small" className="text-ui-fg-muted">
-                Create a promotion config first to configure the promotion mode.
-              </Text>
-            </div>
+          {!isLoading && (
+            <PromotionModeDisplay
+              mode={config?.promotion_mode ?? "standard"}
+              modeConfig={config?.mode_config ?? null}
+              applicationMethod={data.application_method}
+            />
           )}
         </Container>
 
@@ -219,6 +224,7 @@ const PromotionRulesWidget = ({ data }: DetailWidgetProps<AdminPromotion>) => {
               promotionId={data.id}
               currentMode={config.promotion_mode ?? "standard"}
               currentModeConfig={config.mode_config ?? null}
+              applicationMethod={data.application_method}
               onClose={() => setModeOpen(false)}
               isDirtyRef={modeDirtyRef}
             />
