@@ -56,7 +56,8 @@ export function computeBundle(
   let completeBundles = Math.floor(totalQty / config.bundle_size)
 
   if (applicationMethod.max_quantity != null && applicationMethod.max_quantity > 0) {
-    completeBundles = Math.min(completeBundles, applicationMethod.max_quantity)
+    const maxBundlesFromItems = Math.floor(applicationMethod.max_quantity / config.bundle_size)
+    completeBundles = Math.min(completeBundles, maxBundlesFromItems)
   }
 
   if (completeBundles === 0) {
@@ -119,7 +120,8 @@ export function computeBuyGetRepeat(
   let completeGroups = Math.floor(expandedItems.length / groupSize)
 
   if (applicationMethod.max_quantity != null && applicationMethod.max_quantity > 0) {
-    completeGroups = Math.min(completeGroups, applicationMethod.max_quantity)
+    const maxCyclesFromBuyItems = Math.floor(applicationMethod.max_quantity / config.buy_quantity)
+    completeGroups = Math.min(completeGroups, maxCyclesFromBuyItems)
   }
 
   if (completeGroups === 0) {

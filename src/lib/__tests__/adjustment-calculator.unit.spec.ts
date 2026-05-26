@@ -79,15 +79,35 @@ describe("computeBundle", () => {
     expect(result.adjustments).toHaveLength(0)
   })
 
-  it("respects max_quantity as max bundles", () => {
+  it("max_quantity caps participating items (exact multiple)", () => {
     const items = makeItems([
       { id: "item_a", unit_price: 2000, quantity: 9 },
     ])
-    // 9 items → 3 bundles possible, but max_quantity = 1
-    // 1 bundle: original 6000, cost 5000, savings 1000
-    const result = computeBundle("promo_1", items, bundleConfig, { value: 5000, max_quantity: 1 })
+    // 9 items, bundle_size=3, max_quantity=6 → floor(6/3)=2 bundles
+    // 2 bundles: original 12000, cost 10000, savings 2000
+    const result = computeBundle("promo_1", items, bundleConfig, { value: 5000, max_quantity: 6 })
     const totalAdjustment = result.adjustments.reduce((sum, a) => sum + a.amount, 0)
-    expect(totalAdjustment).toBe(1000)
+    expect(totalAdjustment).toBe(2000)
+  })
+
+  it("max_quantity caps participating items (partial bundle discarded)", () => {
+    const items = makeItems([
+      { id: "item_a", unit_price: 2000, quantity: 9 },
+    ])
+    // 9 items, bundle_size=3, max_quantity=7 → floor(7/3)=2 bundles (6 items)
+    // 7th item doesn't complete a bundle
+    const result = computeBundle("promo_1", items, bundleConfig, { value: 5000, max_quantity: 7 })
+    const totalAdjustment = result.adjustments.reduce((sum, a) => sum + a.amount, 0)
+    expect(totalAdjustment).toBe(2000)
+  })
+
+  it("max_quantity too small for even one bundle", () => {
+    const items = makeItems([
+      { id: "item_a", unit_price: 2000, quantity: 9 },
+    ])
+    // max_quantity=2, bundle_size=3 → floor(2/3)=0 bundles
+    const result = computeBundle("promo_1", items, bundleConfig, { value: 5000, max_quantity: 2 })
+    expect(result.adjustments).toHaveLength(0)
   })
 
   it("max_quantity null means unlimited", () => {
@@ -210,15 +230,34 @@ describe("computeBuyGetRepeat", () => {
     expect(result.promotion_id).toBe("promo_xyz")
   })
 
-  it("respects max_quantity as max cycles", () => {
+  it("max_quantity caps by buy items (exact multiple)", () => {
     const items = makeItems([
       { id: "item_a", unit_price: 2000, quantity: 9 },
     ])
-    // 9 items → 3 groups possible, but max_quantity = 1
-    const result = computeBuyGetRepeat("promo_1", items, baseConfig, { type: "percentage", value: 100, max_quantity: 1 })
+    // buy_quantity=2, get_quantity=1, max_quantity=4 → floor(4/2)=2 cycles
+    // 2 cycles, 2 free items at 2000 = 4000
+    const result = computeBuyGetRepeat("promo_1", items, baseConfig, { type: "percentage", value: 100, max_quantity: 4 })
     const totalAdjustment = result.adjustments.reduce((sum, a) => sum + a.amount, 0)
-    // 1 group, 1 free item at 2000
+    expect(totalAdjustment).toBe(4000)
+  })
+
+  it("max_quantity caps by buy items (partial cycle discarded)", () => {
+    const items = makeItems([
+      { id: "item_a", unit_price: 2000, quantity: 9 },
+    ])
+    // buy_quantity=2, get_quantity=1, max_quantity=3 → floor(3/2)=1 cycle
+    const result = computeBuyGetRepeat("promo_1", items, baseConfig, { type: "percentage", value: 100, max_quantity: 3 })
+    const totalAdjustment = result.adjustments.reduce((sum, a) => sum + a.amount, 0)
     expect(totalAdjustment).toBe(2000)
+  })
+
+  it("max_quantity too small for even one cycle", () => {
+    const items = makeItems([
+      { id: "item_a", unit_price: 2000, quantity: 9 },
+    ])
+    // buy_quantity=2, max_quantity=1 → floor(1/2)=0 cycles
+    const result = computeBuyGetRepeat("promo_1", items, baseConfig, { type: "percentage", value: 100, max_quantity: 1 })
+    expect(result.adjustments).toHaveLength(0)
   })
 
   it("max_quantity null means unlimited", () => {
