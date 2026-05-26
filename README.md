@@ -10,7 +10,7 @@ Medusa's native promotion system handles discount calculation well, but its elig
 - **Configurable combinators**: AND/OR within groups and between groups (DNF by default — any group triggers the promotion, all rules in a group must pass)
 - **Three-layer enforcement**: synchronous code gate -> async auto-apply engine -> synchronous checkout gate
 - **Auto-apply flag**: promotions are automatically added/removed from carts as cart state changes
-- **Promotion modes**: standard (Medusa native), bundle pricing, and buy-get repeat — with repeat caps via `max_quantity`
+- **Promotion modes**: standard (Medusa native), bundle pricing, and buy-get repeat — with item caps via `max_quantity`
 - **Manual cart adjustments**: operator-created discounts/surcharges per cart, item-level or cart-wide
 - **Admin widget**: visual rule editor and promotion mode configuration injected into the Medusa promotion detail page
 - **Full REST API**: CRUD + batch endpoints for configs, rule groups, rules, and cart adjustments
@@ -131,7 +131,7 @@ The `promotion_mode` field on `PromotionExtConfig` controls how a promotion's di
 |---|---|---|---|
 | `type` | fixed or percentage | Must be `"fixed"` | Discount type (fixed or percentage) |
 | `value` | Discount amount or % | Bundle target price | Discount amount or % on "get" items |
-| `max_quantity` | Max items discounted | Max bundles that can form | Max buy-get cycles that can apply |
+| `max_quantity` | Max items discounted | Max participating items (only complete bundles form) | Max "buy" items (cycles = floor(max_quantity / buy_quantity)) |
 
 #### Standard (default)
 
@@ -146,7 +146,7 @@ Set a fixed price for a group of qualifying items, repeating for every complete 
 - `application_method.value` = the bundle target price (e.g., 50 for "3 for 50")
 - `mode_config.bundle_size` = items per bundle (e.g., 3)
 
-**Repeat cap:** Set `application_method.max_quantity` to limit how many bundles can form. Leave unset for unlimited.
+**Item cap:** Set `application_method.max_quantity` to limit how many items can participate in bundles. Only complete bundles form — e.g., `max_quantity = 7` with `bundle_size = 3` yields 2 bundles (6 items). Leave unset for unlimited.
 
 ```bash
 # Set mode to bundle with bundle_size = 3
@@ -170,7 +170,7 @@ Buy X items at full price, get Y items discounted — repeating for every qualif
 - `mode_config.buy_quantity` = items at full price per group
 - `mode_config.get_quantity` = items discounted per group
 
-**Repeat cap:** Set `application_method.max_quantity` to limit how many cycles can apply. Leave unset for unlimited.
+**Buy item cap:** Set `application_method.max_quantity` to limit how many "buy" items can participate. Cycles = `floor(max_quantity / buy_quantity)` — e.g., `max_quantity = 4` with `buy_quantity = 3` yields 1 cycle. **Note:** this counts buy items, not discounted items — see CONTEXT.md for the semantic rationale. Leave unset for unlimited.
 
 ```bash
 # Set mode to buy-get repeat: buy 2 get 1 free
