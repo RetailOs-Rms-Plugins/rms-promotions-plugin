@@ -161,6 +161,9 @@ export default async function cartUpdatedHandler({
       fields: [
         "id",
         "code",
+        "application_method.type",
+        "application_method.value",
+        "application_method.max_quantity",
         "application_method.target_rules.attribute",
         "application_method.target_rules.operator",
         "application_method.target_rules.values.value",
@@ -231,13 +234,21 @@ export default async function cartUpdatedHandler({
 
       const modeConfig = (cfg as any).mode_config
       const promotionMode = (cfg as any).promotion_mode as string
+      const am = (promo as any).application_method
 
       let computedGroup: { promotion_id: string; adjustments: { item_id: string; amount: number }[] }
 
       if (promotionMode === "bundle") {
-        computedGroup = computeBundle((cfg as any).promotion_id, eligibleWithPrices, modeConfig)
+        computedGroup = computeBundle((cfg as any).promotion_id, eligibleWithPrices, modeConfig, {
+          value: typeof am?.value === "number" ? am.value : Number(am?.value ?? 0),
+          max_quantity: am?.max_quantity ?? null,
+        })
       } else if (promotionMode === "buyget_repeat") {
-        computedGroup = computeBuyGetRepeat((cfg as any).promotion_id, eligibleWithPrices, modeConfig)
+        computedGroup = computeBuyGetRepeat((cfg as any).promotion_id, eligibleWithPrices, modeConfig, {
+          type: am?.type === "percentage" ? "percentage" : "fixed",
+          value: typeof am?.value === "number" ? am.value : Number(am?.value ?? 0),
+          max_quantity: am?.max_quantity ?? null,
+        })
       } else {
         continue
       }
@@ -271,15 +282,41 @@ export default async function cartUpdatedHandler({
   }
 
   // Re-apply custom adjustments (ADR-0005: re-apply after wipe)
+  // Also strip Medusa's value:1 adjustments for custom-mode promotions
   const cartExtAdjustments = await service.listCartExtAdjustments({ cart_id: cartId })
+  const customModePromoIds = new Set(nonStandardConfigs.map((c: any) => c.promotion_id))
+  const hasCustomAdjustments = cartExtAdjustments.length > 0
+  const hasCustomModePromos = customModePromoIds.size > 0
 
-  if (cartExtAdjustments.length) {
+  if (hasCustomAdjustments || hasCustomModePromos) {
     const cartModule = container.resolve(Modules.CART)
-    const allAdjustmentsToApply: { item_id: string; code: string; amount: number; description?: string; promotion_id?: string; provider_id?: string }[] = []
+    const fullCart = await cartModule.retrieveCart(cartId, { relations: ["items.adjustments", "items"] })
+
+    // Collect existing Medusa adjustments, filtering out value:1 garbage from custom-mode promotions
+    const preservedAdjustments: { id: string; item_id: string; code: string; amount: number; description?: string; promotion_id?: string; provider_id?: string }[] = []
+    for (const item of (fullCart.items ?? [])) {
+      for (const adj of ((item as any).adjustments ?? [])) {
+        if (customModePromoIds.has(adj.promotion_id)) {
+          continue // strip Medusa's value:1 adjustments for custom-mode promotions
+        }
+        preservedAdjustments.push({
+          id: adj.id,
+          item_id: (item as any).id,
+          code: adj.code,
+          amount: typeof adj.amount === "number" ? adj.amount : Number(adj.amount),
+          description: adj.description ?? undefined,
+          promotion_id: adj.promotion_id ?? undefined,
+          provider_id: adj.provider_id ?? undefined,
+        })
+      }
+    }
+
+    // Build our custom adjustments
+    const customAdjustments: { item_id: string; code: string; amount: number; description?: string; promotion_id?: string; provider_id?: string }[] = []
 
     const itemSpecific = cartExtAdjustments.filter((adj: any) => adj.item_id)
     for (const adj of itemSpecific) {
-      allAdjustmentsToApply.push({
+      customAdjustments.push({
         item_id: (adj as any).item_id,
         code: (adj as any).code,
         amount: typeof (adj as any).amount === "number" ? (adj as any).amount : Number((adj as any).amount),
@@ -291,17 +328,17 @@ export default async function cartUpdatedHandler({
 
     const cartWide = cartExtAdjustments.filter((adj: any) => !(adj as any).item_id)
     if (cartWide.length) {
-      const fullCart = await cartModule.retrieveCart(cartId, { relations: ["items"] })
-      const cartItems = (fullCart.items ?? []).map((item: any) => ({
-        id: item.id,
-        subtotal: typeof item.subtotal === "number" ? item.subtotal : Number(item.subtotal ?? 0),
-      }))
+      const cartItems = (fullCart.items ?? []).map((item: any) => {
+        const unitPrice = typeof item.unit_price === "number" ? item.unit_price : Number(item.unit_price ?? 0)
+        const qty = typeof item.quantity === "number" ? item.quantity : Number(item.quantity ?? 0)
+        return { id: item.id, subtotal: unitPrice * qty }
+      })
 
       for (const adj of cartWide) {
         const amount = typeof (adj as any).amount === "number" ? (adj as any).amount : Number((adj as any).amount)
         const spread = spreadCartAdjustment(amount, cartItems)
         for (const s of spread) {
-          allAdjustmentsToApply.push({
+          customAdjustments.push({
             item_id: s.item_id,
             code: (adj as any).code,
             amount: s.amount,
@@ -313,10 +350,10 @@ export default async function cartUpdatedHandler({
       }
     }
 
-    if (allAdjustmentsToApply.length) {
-      await cartModule.addLineItemAdjustments(cartId, allAdjustmentsToApply)
-      console.log(`${LOG} re-applied ${allAdjustmentsToApply.length} custom adjustment(s) (${itemSpecific.length} item-specific, ${cartWide.length} cart-wide)`)
-    }
+    // Replace all adjustments: preserved (minus value:1 garbage) + our custom ones
+    const finalAdjustments = [...preservedAdjustments, ...customAdjustments]
+    await cartModule.setLineItemAdjustments(cartId, finalAdjustments)
+    console.log(`${LOG} set ${finalAdjustments.length} adjustment(s) (${preservedAdjustments.length} preserved, ${customAdjustments.length} custom)`)
   }
 
   console.log(`${LOG} done`)
