@@ -10,6 +10,7 @@ import {
   createPromotionExtConfigsWorkflow,
 } from "../../../workflows/promotion-ext"
 import { PROMOTION_EXT_CONFIG_MODEL } from "../../../modules/promotion-ext/constants"
+import { validatePromotionModeCompatibility } from "./mode-validation"
 
 export const GET = async (
   req: MedusaRequest<AdminGetPromotionExtConfigParams>,
@@ -56,6 +57,14 @@ export const POST = async (
     throw new MedusaError(
       MedusaError.Types.DUPLICATE_ERROR,
       `A config already exists for promotion_id "${req.validatedBody.promotion_id}"`
+    )
+  }
+
+  if (req.validatedBody.promotion_mode && req.validatedBody.promotion_mode !== "standard") {
+    await validatePromotionModeCompatibility(
+      query,
+      req.validatedBody.promotion_id,
+      req.validatedBody.promotion_mode
     )
   }
 
