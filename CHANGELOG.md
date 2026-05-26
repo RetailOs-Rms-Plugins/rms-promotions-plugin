@@ -1,5 +1,12 @@
 # @retailos-ai/rms-promotions-extension
 
+## 1.1.1
+
+### Patch Changes
+
+- 37cd462: Reuse Medusa's native application_method fields (value, type, max_quantity) for bundle and buy-get repeat promotion modes instead of custom mode_config fields. max_quantity now caps
+- 254d25b: Reuse Medusa's native application_method fields (value, type, max_quantity) for bundle and buy-get repeat promotion modes instead of custom mode_config fields. max_quantity now caps
+
 ## 1.1.0
 
 ### Minor Changes
