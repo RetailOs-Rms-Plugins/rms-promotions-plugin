@@ -112,7 +112,7 @@ promotion_mode on PromotionExtConfig controls how discounts are calculated. Non-
 |---|---|---|---|
 | type | fixed/percentage | Must be "fixed" | Discount type |
 | value | Discount amount/% | Bundle target price | Discount on "get" items |
-| max_quantity | Max items | Max bundles | Max cycles |
+| max_quantity | Max items discounted | Max participating items (complete bundles only) | Max "buy" items (cycles = floor(max_quantity / buy_quantity)) |
 
 #### Bundle
 Fixed price for N qualifying items, repeating. Example: "3 for 50".
@@ -137,7 +137,7 @@ curl -X PATCH /admin/promotion-ext-configs/:id \
 ```
 
 Discount applies to cheapest qualifying items. Remainder items at full price.
-max_quantity on application_method caps how many bundles/cycles can form.
+max_quantity on application_method caps participating items for bundle (only complete bundles form) or "buy" items for buy-get (cycles = floor(max_quantity / buy_quantity)). Note: for buy-get, this counts buy items not discounted items — deliberate business decision diverging from Medusa's native interpretation.
 
 #### Promotion Type Constraints (validated on create/update)
 Bundle requires type: "fixed" + target_type: "items"
@@ -218,7 +218,7 @@ When to use: "3 for 50" style promotions where N items have a fixed combined pri
 Prerequisites:
 - Medusa promotion created as "Amount off products" (type: "fixed", target_type: "items")
 - application_method.value set to the bundle price (e.g. 5000 for 50.00 in cents)
-- application_method.max_quantity set if you want to cap bundles (optional)
+- application_method.max_quantity set if you want to cap participating items (optional, only complete bundles form)
 - target_rules configured for which products qualify
 
 ```ts
@@ -244,7 +244,7 @@ Prerequisites:
 - Medusa promotion created as product-level type (target_type: "items")
 - application_method.type = "percentage" or "fixed"
 - application_method.value = discount (e.g. 100 for 100% off = free, 50 for 50% off)
-- application_method.max_quantity set if you want to cap cycles (optional)
+- application_method.max_quantity set to cap "buy" items (cycles = floor(max_quantity / buy_quantity), optional)
 
 ```ts
 await sdk.client.fetch("/admin/promotion-ext-configs", {
@@ -324,7 +324,7 @@ Buy-get repeat mode_config:
 Reused application_method fields for non-standard modes:
   type: "fixed"|"percentage" — bundle requires "fixed"
   value: number — bundle price or discount amount/%
-  max_quantity: number|null — max bundles or max buy-get cycles
+  max_quantity: number|null — bundle: max participating items; buy-get: max "buy" items
 
 ## [STRUCTURE]
 

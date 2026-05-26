@@ -9,26 +9,19 @@ import { spreadCartAdjustment } from "../lib/adjustment-spread"
 import { computeBundle, computeBuyGetRepeat } from "../lib/adjustment-calculator"
 import { filterEligibleItems, type CartItemForTargetRules } from "../lib/target-rule-evaluator"
 
-const LOG = "[Layer2/cart-updated]"
-
 // Layer 2 — Auto-Apply Engine
 export default async function cartUpdatedHandler({
   event: { data },
   container,
 }: SubscriberArgs<{ id: string }>) {
   const cartId = data.id
-  console.log(`${LOG} fired for cart ${cartId}`)
+  const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
 
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
   const service: PromotionExtModuleService = container.resolve(PROMOTION_EXT_MODULE)
 
   const autoApplyConfigs = await service.listPromotionExtConfigs({ auto_apply: true })
-  console.log(`${LOG} auto_apply configs found: ${autoApplyConfigs.length}`, autoApplyConfigs.map(c => ({ id: c.id, promotion_id: c.promotion_id })))
-
-  if (!autoApplyConfigs.length) {
-    console.log(`${LOG} no auto_apply configs — exiting early`)
-    return
-  }
+  if (!autoApplyConfigs.length) return
 
   const promotionIds = autoApplyConfigs.map((c) => c.promotion_id)
 
@@ -51,19 +44,9 @@ export default async function cartUpdatedHandler({
   })
 
   const cart = cartList[0]
-  const appliedCodes = new Set<string>((cart?.promotions ?? []).map((p: any) => p.code))
-  console.log(`${LOG} cart fetched:`, {
-    id: cart?.id,
-    item_count: cart?.items?.length,
-    items: cart?.items?.map((i: any) => ({ product_id: i.product_id, quantity: i.quantity })),
-    applied_promotions: [...appliedCodes],
-    customer_id: cart?.customer_id,
-  })
+  if (!cart) return
 
-  if (!cart) {
-    console.log(`${LOG} cart not found — exiting`)
-    return
-  }
+  const appliedCodes = new Set<string>((cart?.promotions ?? []).map((p: any) => p.code))
 
   const { data: promotions } = await query.graph({
     entity: "promotion",
@@ -80,22 +63,13 @@ export default async function cartUpdatedHandler({
     filters: { id: promotionIds },
   })
 
-  console.log(`${LOG} promotions fetched from Medusa: ${promotions.length}`, promotions.map((p: any) => ({ id: p.id, code: p.code, status: p.status })))
-
   const now = new Date()
   const toAdd: string[] = []
   const toRemove: string[] = []
 
   for (const promotion of promotions) {
-    console.log(`${LOG} evaluating promotion "${promotion.code}" (${promotion.id})`)
-
     const configShape = await loadConfigShape(promotion.id, container)
-    console.log(`${LOG} configShape loaded:`, JSON.stringify(configShape))
-
-    if (!configShape) {
-      console.log(`${LOG} no configShape found — skipping`)
-      continue
-    }
+    if (!configShape) continue
 
     const isActive =
       promotion.status === "active" &&
@@ -103,24 +77,13 @@ export default async function cartUpdatedHandler({
       (!promotion.ends_at || new Date(promotion.ends_at) >= now) &&
       passesNativeRules(promotion, cart)
 
-    console.log(`${LOG} isActive: ${isActive}`, {
-      status: promotion.status,
-      starts_at: promotion.starts_at,
-      ends_at: promotion.ends_at,
-      passesNativeRules: passesNativeRules(promotion, cart),
-    })
-
     if (!isActive) {
-      console.log(`${LOG} promotion not active — queuing REMOVE`)
       toRemove.push(promotion.code)
       continue
     }
 
     const enrichedCart = await buildEnrichedCart(cartId, promotion.id, configShape, container)
-    console.log(`${LOG} enrichedCart:`, JSON.stringify(enrichedCart))
-
     const passes = evaluatePromotion(configShape, enrichedCart)
-    console.log(`${LOG} evaluatePromotion result: ${passes}`)
 
     if (passes) {
       toAdd.push(promotion.code)
@@ -132,17 +95,13 @@ export default async function cartUpdatedHandler({
   const actualToAdd = toAdd.filter((code) => !appliedCodes.has(code))
   const actualToRemove = toRemove.filter((code) => appliedCodes.has(code))
 
-  console.log(`${LOG} delta — toAdd: ${JSON.stringify(actualToAdd)}, toRemove: ${JSON.stringify(actualToRemove)}`)
-
   if (actualToAdd.length) {
-    console.log(`${LOG} calling updateCartPromotionsWorkflow ADD for: ${actualToAdd}`)
     await updateCartPromotionsWorkflow(container).run({
       input: { cart_id: cartId, promo_codes: actualToAdd, action: PromotionActions.ADD },
     })
   }
 
   if (actualToRemove.length) {
-    console.log(`${LOG} calling updateCartPromotionsWorkflow REMOVE for: ${actualToRemove}`)
     await updateCartPromotionsWorkflow(container).run({
       input: { cart_id: cartId, promo_codes: actualToRemove, action: PromotionActions.REMOVE },
     })
@@ -172,9 +131,6 @@ export default async function cartUpdatedHandler({
     })
 
     const cartModule = container.resolve(Modules.CART)
-    const fullCart = await cartModule.retrieveCart(cartId, {
-      relations: ["items"],
-    })
 
     const { data: cartWithProducts } = await query.graph({
       entity: "cart",
@@ -203,14 +159,12 @@ export default async function cartUpdatedHandler({
 
       const isApplied = appliedPromotionCodes.includes(promo.code)
       if (!isApplied) {
-        // Promotion not on cart — clean up any stale engine rows
         const staleRows = await service.listCartExtAdjustments({
           cart_id: cartId,
           promotion_id: (cfg as any).promotion_id,
         })
         if (staleRows.length) {
           await service.deleteCartExtAdjustments(staleRows.map((r: any) => r.id))
-          console.log(`${LOG} cleaned up ${staleRows.length} stale ${(cfg as any).promotion_mode} adjustment(s) for removed promotion "${promo.code}"`)
         }
         continue
       }
@@ -253,7 +207,6 @@ export default async function cartUpdatedHandler({
         continue
       }
 
-      // Delete old engine rows for this promotion
       const oldRows = await service.listCartExtAdjustments({
         cart_id: cartId,
         promotion_id: (cfg as any).promotion_id,
@@ -263,7 +216,6 @@ export default async function cartUpdatedHandler({
         await service.deleteCartExtAdjustments(oldRows.map((r: any) => r.id))
       }
 
-      // Write new engine rows
       if (computedGroup.adjustments.length) {
         await service.createCartExtAdjustments(
           computedGroup.adjustments.map((adj) => ({
@@ -276,13 +228,11 @@ export default async function cartUpdatedHandler({
             description: `${promotionMode === "bundle" ? "Bundle" : "Buy-get repeat"} promotion: ${promo.code}`,
           }))
         )
-        console.log(`${LOG} computed ${computedGroup.adjustments.length} ${promotionMode} adjustment(s) for "${promo.code}"`)
       }
     }
   }
 
   // Re-apply custom adjustments (ADR-0005: re-apply after wipe)
-  // Also strip Medusa's value:1 adjustments for custom-mode promotions
   const cartExtAdjustments = await service.listCartExtAdjustments({ cart_id: cartId })
   const customModePromoIds = new Set(nonStandardConfigs.map((c: any) => c.promotion_id))
   const hasCustomAdjustments = cartExtAdjustments.length > 0
@@ -292,12 +242,11 @@ export default async function cartUpdatedHandler({
     const cartModule = container.resolve(Modules.CART)
     const fullCart = await cartModule.retrieveCart(cartId, { relations: ["items.adjustments", "items"] })
 
-    // Collect existing Medusa adjustments, filtering out value:1 garbage from custom-mode promotions
     const preservedAdjustments: { id: string; item_id: string; code: string; amount: number; description?: string; promotion_id?: string; provider_id?: string }[] = []
     for (const item of (fullCart.items ?? [])) {
       for (const adj of ((item as any).adjustments ?? [])) {
         if (customModePromoIds.has(adj.promotion_id)) {
-          continue // strip Medusa's value:1 adjustments for custom-mode promotions
+          continue
         }
         preservedAdjustments.push({
           id: adj.id,
@@ -311,7 +260,6 @@ export default async function cartUpdatedHandler({
       }
     }
 
-    // Build our custom adjustments
     const customAdjustments: { item_id: string; code: string; amount: number; description?: string; promotion_id?: string; provider_id?: string }[] = []
 
     const itemSpecific = cartExtAdjustments.filter((adj: any) => adj.item_id)
@@ -350,13 +298,9 @@ export default async function cartUpdatedHandler({
       }
     }
 
-    // Replace all adjustments: preserved (minus value:1 garbage) + our custom ones
     const finalAdjustments = [...preservedAdjustments, ...customAdjustments]
     await cartModule.setLineItemAdjustments(cartId, finalAdjustments)
-    console.log(`${LOG} set ${finalAdjustments.length} adjustment(s) (${preservedAdjustments.length} preserved, ${customAdjustments.length} custom)`)
   }
-
-  console.log(`${LOG} done`)
 }
 
 export const config: SubscriberConfig = {

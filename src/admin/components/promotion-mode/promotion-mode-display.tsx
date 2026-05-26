@@ -62,7 +62,7 @@ function BundleDisplay({ config, applicationMethod }: { config: BundleModeConfig
       <ReadOnlyRow label="Type" tooltip="Bundle promotions must use the 'Amount off products' type (Fixed).">
         {applicationMethod?.type === "percentage" ? "Percentage" : "Fixed"}
       </ReadOnlyRow>
-      <ReadOnlyRow label="Max Bundles" tooltip="Limits how many bundles can form. This value comes from the promotion's Maximum Quantity field.">
+      <ReadOnlyRow label="Max Items" tooltip="Maximum number of items that can participate in bundles. Only complete bundles form — partial groups are ignored. This value comes from the promotion's Maximum Quantity field.">
         {applicationMethod?.max_quantity != null ? applicationMethod.max_quantity : "-"}
       </ReadOnlyRow>
       <Row label="Remainder">Full Price</Row>
@@ -87,7 +87,7 @@ function BuyGetRepeatDisplay({ config, applicationMethod }: { config: BuyGetRepe
           "-"
         )}
       </ReadOnlyRow>
-      <ReadOnlyRow label="Max Cycles" tooltip="Limits how many buy-get cycles can apply. This value comes from the promotion's Maximum Quantity field.">
+      <ReadOnlyRow label="Max Buy Items" tooltip="Maximum number of 'buy' items. Controls how many buy-get cycles can apply (cycles = max_quantity / buy_quantity). Note: this counts buy items, not discounted items. This value comes from the promotion's Maximum Quantity field.">
         {applicationMethod?.max_quantity != null ? applicationMethod.max_quantity : "-"}
       </ReadOnlyRow>
       <Row label="Applies to">Cheapest item</Row>

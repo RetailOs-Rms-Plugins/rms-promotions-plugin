@@ -80,9 +80,11 @@ For non-standard promotion modes, Medusa's native `application_method` fields ta
 |---|---|---|---|
 | `type` | fixed or percentage discount | Must be `"fixed"` | Discount type (fixed or percentage) |
 | `value` | Discount amount or % | Bundle target price | Discount amount or % on "get" items |
-| `max_quantity` | Max items discounted | Max bundles that can form | Max buy-get cycles that can apply |
+| `max_quantity` | Max items discounted | Max participating items (only complete bundles form) | Max "buy" items (cycles = floor(max_quantity / buy_quantity)) |
 
 The plugin's adjustment calculator reads these fields from the promotion's `application_method`, not from `mode_config`. Medusa's own `computeActions` still runs and produces adjustments from these fields, but the subscriber strips all Medusa-generated adjustments for non-standard promotions (matched by `promotion_id`) and replaces them with the plugin's computed adjustments.
+
+**Semantic note on `max_quantity` for buy-get repeat:** In Medusa's native interpretation, `max_quantity` counts the items that *receive* the discount (the "get" items). In this plugin's buy-get repeat mode, `max_quantity` counts the "buy" items instead — the full-price side of the deal. This is a deliberate business decision. A merchant setting `max_quantity = 6` on a "buy 3 get 2" promotion gets `floor(6/3) = 2` cycles, meaning 4 items discounted — not 6. Future developers should be aware of this difference when comparing the plugin's behavior to Medusa's native buyget documentation.
 
 ### Mode Config
 A JSONB field on `PromotionExtConfig` (`mode_config`) whose shape is determined by `promotion_mode`. Stores the structural parameters for bundle or buy-get repeat calculation that are not represented by Medusa's native fields.
