@@ -16,24 +16,35 @@ export interface PromotionAdjustmentGroup {
 
 export interface BundleModeConfig {
   bundle_size: number
-  bundle_price: number
   remainder: "full_price"
+}
+
+export interface BundleApplicationMethod {
+  value: number
+  max_quantity?: number | null
 }
 
 export interface BuyGetRepeatModeConfig {
   buy_quantity: number
   get_quantity: number
-  discount_type: "percentage" | "fixed"
-  discount_value: number
   discount_target: "cheapest"
   remainder: "full_price"
+}
+
+export interface BuyGetRepeatApplicationMethod {
+  type: "percentage" | "fixed"
+  value: number
+  max_quantity?: number | null
 }
 
 export function computeBundle(
   promotionId: string,
   items: EligibleItem[],
-  config: BundleModeConfig
+  config: BundleModeConfig,
+  applicationMethod: BundleApplicationMethod
 ): PromotionAdjustmentGroup {
+  const bundlePrice = applicationMethod.value
+
   const expandedItems: { item_id: string; unit_price: number }[] = []
   for (const item of items) {
     for (let i = 0; i < item.quantity; i++) {
@@ -42,7 +53,11 @@ export function computeBundle(
   }
 
   const totalQty = expandedItems.length
-  const completeBundles = Math.floor(totalQty / config.bundle_size)
+  let completeBundles = Math.floor(totalQty / config.bundle_size)
+
+  if (applicationMethod.max_quantity != null && applicationMethod.max_quantity > 0) {
+    completeBundles = Math.min(completeBundles, applicationMethod.max_quantity)
+  }
 
   if (completeBundles === 0) {
     return { promotion_id: promotionId, adjustments: [] }
@@ -50,7 +65,7 @@ export function computeBundle(
 
   const bundledCount = completeBundles * config.bundle_size
   const originalTotal = expandedItems.slice(0, bundledCount).reduce((sum, i) => sum + i.unit_price, 0)
-  const bundleTotal = completeBundles * config.bundle_price
+  const bundleTotal = completeBundles * bundlePrice
   const totalSavings = originalTotal - bundleTotal
 
   if (totalSavings <= 0) {
@@ -85,8 +100,12 @@ export function computeBundle(
 export function computeBuyGetRepeat(
   promotionId: string,
   items: EligibleItem[],
-  config: BuyGetRepeatModeConfig
+  config: BuyGetRepeatModeConfig,
+  applicationMethod: BuyGetRepeatApplicationMethod
 ): PromotionAdjustmentGroup {
+  const discountType = applicationMethod.type
+  const discountValue = applicationMethod.value
+
   const expandedItems: { item_id: string; unit_price: number }[] = []
   for (const item of items) {
     for (let i = 0; i < item.quantity; i++) {
@@ -97,7 +116,11 @@ export function computeBuyGetRepeat(
   expandedItems.sort((a, b) => a.unit_price - b.unit_price)
 
   const groupSize = config.buy_quantity + config.get_quantity
-  const completeGroups = Math.floor(expandedItems.length / groupSize)
+  let completeGroups = Math.floor(expandedItems.length / groupSize)
+
+  if (applicationMethod.max_quantity != null && applicationMethod.max_quantity > 0) {
+    completeGroups = Math.min(completeGroups, applicationMethod.max_quantity)
+  }
 
   if (completeGroups === 0) {
     return { promotion_id: promotionId, adjustments: [] }
@@ -113,10 +136,10 @@ export function computeBuyGetRepeat(
 
     for (const item of discountedItems) {
       let discount: number
-      if (config.discount_type === "percentage") {
-        discount = Math.floor(item.unit_price * (config.discount_value / 100))
+      if (discountType === "percentage") {
+        discount = Math.floor(item.unit_price * (discountValue / 100))
       } else {
-        discount = Math.min(config.discount_value, item.unit_price)
+        discount = Math.min(discountValue, item.unit_price)
       }
 
       if (discount > 0) {

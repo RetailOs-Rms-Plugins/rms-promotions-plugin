@@ -87,10 +87,11 @@ export const POST = async (
     ])
   } else {
     const cart = await cartModule.retrieveCart(cart_id, { relations: ["items"] })
-    const cartItems = (cart.items ?? []).map((item: any) => ({
-      id: item.id,
-      subtotal: typeof item.subtotal === "number" ? item.subtotal : Number(item.subtotal ?? 0),
-    }))
+    const cartItems = (cart.items ?? []).map((item: any) => {
+      const unitPrice = typeof item.unit_price === "number" ? item.unit_price : Number(item.unit_price ?? 0)
+      const qty = typeof item.quantity === "number" ? item.quantity : Number(item.quantity ?? 0)
+      return { id: item.id, subtotal: unitPrice * qty }
+    })
     const spread = spreadCartAdjustment(amount, cartItems)
     if (spread.length) {
       await cartModule.addLineItemAdjustments(

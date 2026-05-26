@@ -23,15 +23,15 @@ const PROMOTION_MODES = ["standard", "bundle", "buyget_repeat"] as const
 
 const BundleModeConfigSchema = z.object({
   bundle_size: z.number().int().min(2),
-  bundle_price: z.number().min(0),
+  bundle_price: z.number().min(0).optional(),
   remainder: z.literal("full_price"),
 })
 
 const BuygetRepeatModeConfigSchema = z.object({
   buy_quantity: z.number().int().min(1),
   get_quantity: z.number().int().min(1),
-  discount_type: z.enum(["percentage", "fixed"]),
-  discount_value: z.number().min(0),
+  discount_type: z.enum(["percentage", "fixed"]).optional(),
+  discount_value: z.number().min(0).optional(),
   discount_target: z.literal("cheapest"),
   remainder: z.literal("full_price"),
 })

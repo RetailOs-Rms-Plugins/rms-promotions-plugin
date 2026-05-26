@@ -1,188 +1,407 @@
 ---
-name: rms-promotions-extension
-version: 0.0.1
+name: @retailos-ai/rms-promotions-extension
+version: 1.0.3
 language: TypeScript
 license: MIT
 entry: src/modules/promotion-ext/index.ts
-description: Medusa v2 plugin that gates promotion eligibility on live cart state (subtotal, quantities, customer history) with three-layer enforcement and an admin rule editor.
-repo: https://github.com/RetailOs-Rms-Plugins/rms-marketing-plugin
+description: Medusa v2 plugin adding cart-state eligibility rules, bundle pricing, and repeating buy-get promotions with three-layer enforcement
+repo: https://github.com/RetailOs-Rms-Plugins/rms-promotions-plugin.git
 ---
 
 # INDEX
-# L21   [OVERVIEW]    —  What this plugin does and why it exists
-# L24   [INSTALL]     —  Requirements and installation steps
-# L42   [QUICKSTART]  —  Minimal API example to attach rules to a promotion
-# L66   [USAGE]       —  Rule fields, combinators, auto-apply, exclusion groups, enforcement layers
-# L123  [API]         —  All REST endpoints with request shapes
-# L154  [STRUCTURE]   —  File and directory layout with descriptions
-# L175  [DEPS]        —  Key dependencies and their roles
-# L182  [DEV]         —  Development setup, test, and build commands
+# L23   [OVERVIEW]    —  What this plugin does and its core architecture
+# L33   [INSTALL]     —  Requirements and installation commands
+# L56   [QUICKSTART]  —  Minimal working example with curl
+# L81   [USAGE]       —  Rule fields, promotion modes, manual adjustments, enforcement layers
+# L176  [IMPLEMENT]   —  Consumer integration recipes with code examples
+# L304  [CONFIG]      —  Promotion ext config fields and mode_config shapes
+# L329  [STRUCTURE]   —  File and directory layout
+# L357  [API]         —  All REST endpoints with methods and paths
+# L389  [DEPS]        —  Key dependencies
+# L401  [DEV]         —  Development setup, test, and build commands
 
 ## [OVERVIEW]
-Medusa's native promotion eligibility rules cover only static attributes: region, sales channel, currency, and customer group. This plugin extends Medusa's promotion engine with cart-state rules — minimum subtotal, item/collection quantities, per-customer usage caps, first-order status — without replacing Medusa's discount calculation. Merchants create promotions normally in Medusa admin, then attach custom rule sets via a plugin widget on the promotion detail page or via REST API. Rules are enforced at three lifecycle points: synchronously when a promo code is entered (Layer 1), asynchronously after any cart mutation (Layer 2 auto-apply), and synchronously at checkout (Layer 3). Designed for hundreds of clients and thousands of promotions — uses a normalized 3-table DB schema so `auto_apply` can be filtered at the SQL level.
+
+Medusa v2 plugin that extends the native promotion system in three ways: (1) cart-state eligibility rules — subtotal thresholds, item quantities, per-customer usage caps, first-order checks — evaluated dynamically as the cart changes; (2) promotion modes — bundle pricing ("3 for 50") and repeating buy-get deals ("buy 2 get 1 free, every group") that Medusa's one-shot engine cannot express; (3) manual cart adjustments — operator-created discounts/surcharges per cart.
+
+Enforcement uses a three-layer architecture: Layer 1 (Code Gate) validates synchronously when a promo code is entered, Layer 2 (Auto-Apply Engine) runs asynchronously on cart.updated to add/remove promotions, Layer 3 (Checkout Gate) blocks order placement if any promotion violates its rules.
+
+All plugin-managed promotions must have `is_automatic: false` in Medusa. The plugin owns auto-apply logic via Layer 2.
+
+Four DB tables: `promotion_ext_config`, `promotion_ext_rule_group`, `promotion_ext_rule`, `cart_ext_adjustment`. Admin widget injected at `promotion.details.after`.
 
 ## [INSTALL]
-Requires: Node.js 20+, @medusajs/medusa 2.14.2, PostgreSQL
+
+Requires: Node.js 20+, @medusajs/medusa 2.15.2, PostgreSQL
+
 ```bash
 yarn add @retailos-ai/rms-promotions-extension
 ```
-Register in medusa-config.ts:
+
+Register in `medusa-config.ts`:
 ```ts
 import { defineConfig } from "@medusajs/framework/utils"
 export default defineConfig({
-  plugins: [{ resolve: "@retailos-ai/rms-promotions-extension" }],
+  plugins: [
+    { resolve: "@retailos-ai/rms-promotions-extension" },
+  ],
 })
 ```
+
 Run migrations:
 ```bash
 npx medusa db:migrate
 ```
-**Required constraint:** every Medusa promotion managed by this plugin must have `is_automatic: false`. Setting `is_automatic: true` causes Medusa to unconditionally re-apply the promotion, bypassing all plugin rules.
 
 ## [QUICKSTART]
+
 ```bash
-# Create config (auto-apply when rules pass)
+# 1. Create promotion in Medusa admin with is_automatic: false
+
+# 2. Create config with auto-apply
 curl -X POST /admin/promotion-ext-configs \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{ "promotion_id": "promo_abc", "auto_apply": true }'
-# → { "promotion_ext_config": { "id": "pec_001" } }
 
-# Create include rule group
+# 3. Create include rule group
 curl -X POST /admin/promotion-ext-rule-groups \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{ "promotion_config_id": "pec_001", "type": "include" }'
-# → { "promotion_ext_rule_group": { "id": "perg_001" } }
 
-# Add rule: auto-apply when subtotal >= 300
+# 4. Add rule: apply when subtotal >= 300
 curl -X POST /admin/promotion-ext-rules \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{ "rule_group_id": "perg_001", "rule_type": "comparison", "config": { "field": "subtotal", "operator": "gte", "value": 300 } }'
 ```
-Promotion is now auto-applied to any cart with subtotal ≥ 300, and removed when it drops below.
+Promotion auto-applies to carts with subtotal >= 300, auto-removes when below.
 
 ## [USAGE]
 
-### Rule fields (rule_type: "comparison")
-Each rule: `{ rule_type: "comparison", config: { field, operator, value, scope? } }`
+### Rule Fields
 
-subtotal: number — Cart item subtotal pre-discount. Operators: eq neq gt gte lt lte. No scope.
-totalQuantity: number — Total item count in cart. Operators: eq neq gt gte lt lte. No scope.
-quantityOfProduct: number — Qty of a specific product. Operators: eq neq gt gte lt lte. Scope: `{ product_id }` required.
-quantityOfCollection: number — Qty from a collection. Operators: eq neq gt gte lt lte. Scope: `{ collection_id }` required.
-usesPerCustomer: number — Times customer used this promotion (non-cancelled/refunded orders). Operators: lt lte only. No scope.
-firstOrder: boolean — Customer has zero prior orders. Operator: eq only. Value: true|false. No scope.
-Guest carts (no customer_id): usesPerCustomer and firstOrder rules pass unconditionally (optimistic — same as Medusa native behavior for customer groups).
+| Field | Type | Operators | Scope | Description |
+|---|---|---|---|---|
+| subtotal | number | eq neq gt gte lt lte | -- | Cart item subtotal pre-discount |
+| totalQuantity | number | eq neq gt gte lt lte | -- | Total items in cart |
+| quantityOfProduct | number | eq neq gt gte lt lte | { product_id } | Qty of specific product |
+| quantityOfCollection | number | eq neq gt gte lt lte | { collection_id } | Qty from specific collection |
+| usesPerCustomer | number | lt lte | -- | Times customer used this promotion |
+| firstOrder | boolean | eq | -- | Customer has zero prior non-cancelled orders |
+
+Guest carts pass usesPerCustomer and firstOrder unconditionally (optimistic).
 
 ### Combinators
-rules_combinator on each rule group: "and" (default) | "or" — joins rules within the group.
-include_groups_combinator on the config: "or" (default) | "and" — joins include groups together.
-Defaults produce DNF (any group triggers, all rules in a group must pass) — same model as Braze, Segment, Shopify.
 
-Example — cart between 100–500:
-```json
-{
-  "include_groups_combinator": "or",
-  "rule_groups": [{
-    "type": "include", "rules_combinator": "and",
-    "rules": [
-      { "rule_type": "comparison", "config": { "field": "subtotal", "operator": "gte", "value": 100 } },
-      { "rule_type": "comparison", "config": { "field": "subtotal", "operator": "lte", "value": 500 } }
-    ]
-  }]
-}
+rules_combinator on group: "and"|"or" (default "and") — joins rules within a group
+include_groups_combinator on config: "and"|"or" (default "or") — joins groups
+Defaults produce DNF (Disjunctive Normal Form).
+
+### Auto-Apply vs Code-Only
+
+auto_apply: true — Layer 2 subscriber adds/removes promotion on cart changes
+auto_apply: false (default) — code-only, rules enforced on code entry
+
+### Promotion Modes
+
+promotion_mode on PromotionExtConfig controls how discounts are calculated. Non-standard modes reuse Medusa's application_method fields:
+
+| Field | Standard | Bundle | Buy-Get Repeat |
+|---|---|---|---|
+| type | fixed/percentage | Must be "fixed" | Discount type |
+| value | Discount amount/% | Bundle target price | Discount on "get" items |
+| max_quantity | Max items | Max bundles | Max cycles |
+
+#### Bundle
+Fixed price for N qualifying items, repeating. Example: "3 for 50".
+Requirements: Medusa promotion "Amount off products" (type: "fixed", target_type: "items")
+application_method.value = bundle target price
+mode_config = { bundle_size: number, remainder: "full_price" }
+
+```bash
+curl -X PATCH /admin/promotion-ext-configs/:id \
+  -d '{ "promotion_mode": "bundle", "mode_config": { "bundle_size": 3, "remainder": "full_price" } }'
 ```
 
-### auto_apply flag
-auto_apply: true — Layer 2 (cart.updated subscriber) adds/removes promotion automatically.
-auto_apply: false (default) — code-only; customer must enter code; rules still enforced at entry and checkout.
-Safe default: any non-true value means code-only (fail-closed design).
+#### Buy-Get Repeat
+Buy X at full price, get Y discounted, repeating. Example: "buy 2 get 1 free".
+Requirements: product-level type (target_type: "items")
+application_method.type = "fixed"|"percentage", application_method.value = discount
+mode_config = { buy_quantity: number, get_quantity: number, discount_target: "cheapest", remainder: "full_price" }
 
-### Exclusion groups (draft, API-only)
-Create a rule group with `type: "exclude"` to suppress a promotion even when include groups pass.
-exclude_groups_combinator on config controls how multiple exclude groups are joined ("or" default).
-Not exposed in admin UI. Read-only in widget summary. May be removed or promoted to full UI in a future version.
+```bash
+curl -X PATCH /admin/promotion-ext-configs/:id \
+  -d '{ "promotion_mode": "buyget_repeat", "mode_config": { "buy_quantity": 2, "get_quantity": 1, "discount_target": "cheapest", "remainder": "full_price" } }'
+```
 
-### Three-layer enforcement architecture
-Layer 1 — Code Gate: updateCartPromotionsWorkflow.hooks.validate fires synchronously on ADD. Throws MedusaError (HTTP 400) if rules fail. Cart unchanged.
-Layer 2 — Auto-Apply Engine: cart.updated subscriber fires asynchronously after HTTP response. Fetches auto_apply=true configs, evaluates rules, computes delta (toAdd/toRemove), calls updateCartPromotionsWorkflow. No loop: updateCartPromotionsWorkflow does not emit cart.updated.
-Layer 3 — Checkout Gate: completeCartWorkflow.hooks.validate fires synchronously before order placement. Throws MedusaError (HTTP 400). Never mutates — validation only.
-Layer 1 + Layer 2 are intentionally redundant: when Layer 2 ADDs a promotion, Layer 1 re-evaluates inside the same workflow call. Both use the same evaluator, so they always agree.
+Discount applies to cheapest qualifying items. Remainder items at full price.
+max_quantity on application_method caps how many bundles/cycles can form.
 
-### Rule evaluator (src/lib/rule-evaluator.ts)
-evaluatePromotion(config: PromotionExtConfigShape, cart: EnrichedCart): boolean
-Pure function — no DB calls. Dispatches to evaluateComparisonRule for rule_type "comparison". Callers pre-fetch DB data (e.g. usesPerCustomer count) and inject it into EnrichedCart before calling.
+#### Promotion Type Constraints (validated on create/update)
+Bundle requires type: "fixed" + target_type: "items"
+Buy-get requires target_type: "items" (fixed or percentage)
+"Amount off order", "Buy X Get Y", "Free shipping" are incompatible
 
-### Cart enricher (src/lib/cart-enricher.ts)
-buildEnrichedCart(cartId, promotionId, configShape, container): Promise<EnrichedCart>
-Queries Medusa graph for cart items, looks up usesPerCustomer from order history if any rule uses that field.
-passesNativeRules(promotion, cart): boolean — checks Medusa's 4 native rule attributes (region_id, sales_channel_id, currency_code, customer_group_id) using cart data already in memory.
+### Manual Cart Adjustments
 
-## [API]
-All endpoints are admin-only. All resources support single-item CRUD and /batch for bulk operations.
+Operator-created discounts/surcharges per cart. Source: "manual".
 
-### /admin/promotion-ext-configs
-GET    ?promotion_id=X              — fetch config with nested rule_groups and their rules
-POST                                — body: { promotion_id: string, auto_apply?: boolean }
-PATCH  /:id                         — body: { auto_apply?: boolean, include_groups_combinator?: "and"|"or" }
-DELETE /:id
-POST   /batch                       — body: { items: [...] }
-PATCH  /batch                       — body: { items: [{ id, ...fields }] }
-DELETE /batch                       — body: { ids: string[] }
+```bash
+# Item-level discount
+curl -X POST /admin/cart-adjustments/:cart_id \
+  -d '{ "item_id": "item_abc", "amount": 500, "code": "VIP", "description": "VIP discount" }'
 
-### /admin/promotion-ext-rule-groups
-GET    ?promotion_config_id=X       — fetch all groups for a config
-POST                                — body: { promotion_config_id: string, type: "include"|"exclude", rules_combinator?: "and"|"or" }
-PATCH  /:id                         — body: { rules_combinator?: "and"|"or" }
-DELETE /:id                         — cascades deletion of all rules in the group
-POST   /batch                       — body: { items: [...] }
-DELETE /batch                       — body: { ids: string[] }
+# Cart-wide discount (spread proportionally across items)
+curl -X POST /admin/cart-adjustments/:cart_id \
+  -d '{ "amount": 1000, "code": "MANUAL", "description": "Store credit" }'
+```
 
-### /admin/promotion-ext-rules
-GET    ?rule_group_id[]=X&rule_group_id[]=Y   — fetch rules for one or more groups
-POST                                — body: { rule_group_id: string, rule_type: "comparison", config: ComparisonRuleConfig }
-PATCH  /:id                         — body: { rule_type?, config? }
-DELETE /:id
-POST   /batch                       — body: { items: [...] }
-PATCH  /batch                       — body: { items: [{ id, ...fields }] }
-DELETE /batch                       — body: { ids: string[] }
+Positive amount = discount, negative = surcharge.
+Cart-wide adjustments (item_id: null) spread proportionally by item subtotal share.
 
-Validation errors (HTTP 400): unknown rule_type, invalid field/operator combo, missing scope for scoped fields, usesPerCustomer with non-lt/lte operator.
+### Three-Layer Enforcement
+
+| Layer | When | Mechanism | On Failure |
+|---|---|---|---|
+| 1 Code Gate | Promo code entered | updateCartPromotionsWorkflow.hooks.validate (sync) | HTTP 400 |
+| 2 Auto-Apply | Cart mutation | cart.updated subscriber (async) | Silent add/remove |
+| 3 Checkout | Order placement | completeCartWorkflow.hooks.validate (sync) | HTTP 400 |
+
+### Adjustment Stripping
+
+For non-standard modes, Medusa's computeActions still runs and produces adjustments from the application_method fields. The subscriber strips all Medusa-generated adjustments for these promotions (matched by promotion_id) and replaces them with the plugin's computed adjustments. This stripping is unconditional for any promotion with promotion_mode !== "standard".
+
+## [IMPLEMENT]
+
+### Adding cart-state rules to a Medusa promotion
+
+When to use: you want a promotion to activate/deactivate based on live cart state (subtotal, quantities, customer history)
+
+Prerequisites:
+- Medusa promotion exists with is_automatic: false
+- Plugin installed and migrations run
+
+```ts
+// In your admin panel or backend script:
+const sdk = /* your Medusa admin SDK instance */
+
+// 1. Create config
+const { promotion_ext_config: config } = await sdk.client.fetch(
+  "/admin/promotion-ext-configs",
+  { method: "POST", body: { promotion_id: "promo_abc", auto_apply: true } }
+)
+
+// 2. Create rule group
+const { promotion_ext_rule_group: group } = await sdk.client.fetch(
+  "/admin/promotion-ext-rule-groups",
+  { method: "POST", body: { promotion_config_id: config.id, type: "include", rules_combinator: "and" } }
+)
+
+// 3. Create rules: subtotal >= 200 AND totalQuantity >= 3
+await sdk.client.fetch("/admin/promotion-ext-rules/batch", {
+  method: "POST",
+  body: {
+    items: [
+      { rule_group_id: group.id, rule_type: "comparison", config: { field: "subtotal", operator: "gte", value: 200 } },
+      { rule_group_id: group.id, rule_type: "comparison", config: { field: "totalQuantity", operator: "gte", value: 3 } },
+    ]
+  }
+})
+```
+
+### Setting up bundle pricing
+
+When to use: "3 for 50" style promotions where N items have a fixed combined price
+
+Prerequisites:
+- Medusa promotion created as "Amount off products" (type: "fixed", target_type: "items")
+- application_method.value set to the bundle price (e.g. 5000 for 50.00 in cents)
+- application_method.max_quantity set if you want to cap bundles (optional)
+- target_rules configured for which products qualify
+
+```ts
+// After creating the promotion in Medusa with type: "fixed", value: 5000
+await sdk.client.fetch("/admin/promotion-ext-configs", {
+  method: "POST",
+  body: {
+    promotion_id: "promo_bundle",
+    auto_apply: true,
+    promotion_mode: "bundle",
+    mode_config: { bundle_size: 3, remainder: "full_price" }
+  }
+})
+```
+
+The calculator expands all eligible items into individual units, forms complete bundles of `bundle_size`, computes savings (original total - bundles * bundle_price), and distributes savings proportionally by unit price. Remainder items pay full price.
+
+### Setting up buy-get repeat
+
+When to use: "buy 2 get 1 free" or "buy 3 get 1 at 50% off" repeating for every qualifying group
+
+Prerequisites:
+- Medusa promotion created as product-level type (target_type: "items")
+- application_method.type = "percentage" or "fixed"
+- application_method.value = discount (e.g. 100 for 100% off = free, 50 for 50% off)
+- application_method.max_quantity set if you want to cap cycles (optional)
+
+```ts
+await sdk.client.fetch("/admin/promotion-ext-configs", {
+  method: "POST",
+  body: {
+    promotion_id: "promo_buyget",
+    auto_apply: true,
+    promotion_mode: "buyget_repeat",
+    mode_config: {
+      buy_quantity: 2,
+      get_quantity: 1,
+      discount_target: "cheapest",
+      remainder: "full_price"
+    }
+  }
+})
+```
+
+Items are sorted by price ascending. In each group, the cheapest get_quantity items receive the discount. For percentage: discount = floor(unit_price * value / 100). For fixed: discount = min(value, unit_price).
+
+### Creating manual cart adjustments from storefront server
+
+When to use: operator needs to apply a custom discount/surcharge to a specific cart
+
+Prerequisites:
+- Admin API access (secret token or admin session)
+- Cart ID known
+
+```ts
+// In your storefront server route handler:
+const response = await fetch(`${MEDUSA_URL}/admin/cart-adjustments/${cartId}`, {
+  method: "POST",
+  headers: {
+    "Authorization": `Bearer ${ADMIN_TOKEN}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    amount: 1000,           // positive = discount
+    code: "OPERATOR_DISC",
+    description: "Loyalty discount",
+    // item_id: "item_xyz"  // omit for cart-wide spread
+  }),
+})
+```
+
+Conventions:
+- All admin endpoints require Medusa admin authentication
+- No store-scoped adjustment endpoints exist -- customers must never self-discount
+- Adjustments are immediately applied via addLineItemAdjustments, not deferred to cart.updated
+
+Troubleshooting:
+- "mode_config does not match bundle schema": mode_config shape must match the selected promotion_mode
+- "Bundle mode requires the promotion type Amount off products": change the Medusa promotion type to "Amount off products" (fixed)
+- Promotion not auto-applying: check auto_apply is true AND is_automatic is false on the Medusa promotion
+- Adjustments disappear after cart update: expected -- the subscriber re-applies from cart_ext_adjustment table on every update
+
+## [CONFIG]
+
+PromotionExtConfig fields:
+  promotion_id: string (required) — links to Medusa promotion.id
+  auto_apply: boolean (default false) — enables Layer 2 auto-apply
+  include_groups_combinator: "and"|"or" (default "or") — joins include groups
+  exclude_groups_combinator: "and"|"or" (default "or") — joins exclude groups (draft)
+  promotion_mode: "standard"|"bundle"|"buyget_repeat" (default "standard")
+  mode_config: JSON (nullable) — shape depends on promotion_mode
+
+Bundle mode_config:
+  bundle_size: number (min 2) — items per bundle
+  remainder: "full_price" — leftover items at full price
+
+Buy-get repeat mode_config:
+  buy_quantity: number (min 1) — items at full price per group
+  get_quantity: number (min 1) — items discounted per group
+  discount_target: "cheapest" — discount applies to cheapest items
+  remainder: "full_price" — leftover items at full price
+
+Reused application_method fields for non-standard modes:
+  type: "fixed"|"percentage" — bundle requires "fixed"
+  value: number — bundle price or discount amount/%
+  max_quantity: number|null — max bundles or max buy-get cycles
 
 ## [STRUCTURE]
-src/admin/components/rules-editor/: Drawer-based rule editor — combinator-toggle.tsx, rule-group-card.tsx, rules-editor-form.tsx
-src/admin/hooks/: React Query hooks — use-promotion-ext-config.ts, use-promotion-ext-rule-groups.ts, use-promotion-ext-rules.ts and mutation variants
-src/admin/widgets/promotion-rules-widget.tsx: Medusa widget injected at promotion.details.after; hosts Drawer, Prompt (unsaved-changes guard), and read-only rule summary
-src/api/admin/promotion-ext-configs/: route.ts, [id]/route.ts, batch/route.ts, validators.ts, middlewares.ts
-src/api/admin/promotion-ext-rule-groups/: same structure as configs
-src/api/admin/promotion-ext-rules/: same structure as configs
-src/lib/rule-evaluator.ts: pure evaluatePromotion() — all rule evaluation logic; no DB calls
-src/lib/cart-enricher.ts: buildEnrichedCart(), passesNativeRules() — DB queries isolated here
-src/modules/promotion-ext/models/promotion-ext-config.ts: DB entity with auto_apply, include_groups_combinator, exclude_groups_combinator
-src/modules/promotion-ext/models/promotion-ext-rule-group.ts: DB entity with type ("include"|"exclude"), rules_combinator
-src/modules/promotion-ext/models/promotion-ext-rule.ts: DB entity with rule_type discriminator and config JSONB
-src/modules/promotion-ext/service.ts: MedusaService auto-generating CRUD for all 3 models
-src/modules/promotion-ext/migrations/: DB migrations (Migration20260512131732, Migration20260518111622)
-src/subscribers/cart-updated.ts: Layer 2 auto-apply engine
+
+src/admin/components/rules-editor/: Drawer-based rule editor with combinator toggles and group cards
+src/admin/components/promotion-mode/: Promotion mode display (read-only) and edit form
+src/admin/hooks/: React Query hooks for configs, rule groups, rules (CRUD + batch)
+src/admin/widgets/promotion-rules-widget.tsx: Main widget injected at promotion.details.after
+src/admin/lib/types.ts: Admin TypeScript types
+src/api/admin/promotion-ext-configs/: Config REST routes, validators, mode validation
+src/api/admin/promotion-ext-rule-groups/: Rule group REST routes and validators
+src/api/admin/promotion-ext-rules/: Rule REST routes and validators
+src/api/admin/cart-adjustments/: Manual cart adjustment CRUD per cart
+src/lib/rule-evaluator.ts: Pure rule evaluation function (no DB, no side effects)
+src/lib/cart-enricher.ts: Builds EnrichedCart context with order history
+src/lib/adjustment-calculator.ts: Bundle and buy-get repeat computation
+src/lib/target-rule-evaluator.ts: Filters eligible cart items by target rules
+src/lib/adjustment-spread.ts: Proportional distribution of cart-wide adjustments
+src/modules/promotion-ext/models/: MikroORM entities (4 tables)
+src/modules/promotion-ext/service.ts: MedusaService with auto-generated CRUD
+src/modules/promotion-ext/migrations/: DB migrations
+src/subscribers/cart-updated.ts: Layer 2 auto-apply engine + adjustment computation
 src/subscribers/validate-cart-promotions.ts: Layer 1 code gate
 src/subscribers/validate-checkout.ts: Layer 3 checkout gate
-src/subscribers/promotion-deleted.ts: deletes promotion_ext_config (and cascades) on promotion.deleted event
-src/types/: TypeScript types for HTTP payloads and responses per resource
-src/workflows/promotion-ext/: Medusa workflows (create/update/delete) for all 3 resources, used by API routes
+src/subscribers/promotion-deleted.ts: Cascade cleanup on promotion deletion
+src/types/: HTTP payload and response TypeScript types
+src/workflows/promotion-ext/: Medusa workflows for CRUD operations
+docs/metadata-promotion-enforcement/CONTEXT.md: Domain glossary
+docs/metadata-promotion-enforcement/adr/: Architecture Decision Records (5 ADRs)
+
+## [API]
+
+POST   /admin/promotion-ext-configs — Create config { promotion_id, auto_apply?, promotion_mode?, mode_config? }
+GET    /admin/promotion-ext-configs?promotion_id=X — List configs with nested groups and rules
+PATCH  /admin/promotion-ext-configs/:id — Update config fields
+DELETE /admin/promotion-ext-configs/:id — Delete config
+POST   /admin/promotion-ext-configs/batch — Batch create configs
+PATCH  /admin/promotion-ext-configs/batch — Batch update configs
+DELETE /admin/promotion-ext-configs/batch — Batch delete configs
+
+POST   /admin/promotion-ext-rule-groups — Create group { promotion_config_id, type, rules_combinator? }
+GET    /admin/promotion-ext-rule-groups?promotion_config_id=X — List groups
+PATCH  /admin/promotion-ext-rule-groups/:id — Update group
+DELETE /admin/promotion-ext-rule-groups/:id — Delete group (cascades rules)
+POST   /admin/promotion-ext-rule-groups/batch — Batch create
+DELETE /admin/promotion-ext-rule-groups/batch — Batch delete
+
+POST   /admin/promotion-ext-rules — Create rule { rule_group_id, rule_type, config }
+GET    /admin/promotion-ext-rules?rule_group_id[]=X — List rules for groups
+PATCH  /admin/promotion-ext-rules/:id — Update rule
+DELETE /admin/promotion-ext-rules/:id — Delete rule
+POST   /admin/promotion-ext-rules/batch — Batch create
+PATCH  /admin/promotion-ext-rules/batch — Batch update
+DELETE /admin/promotion-ext-rules/batch — Batch delete
+
+POST   /admin/cart-adjustments/:cart_id — Create adjustment { amount, code?, item_id?, description? }
+GET    /admin/cart-adjustments/:cart_id — List adjustments for cart
+PATCH  /admin/cart-adjustments/:cart_id/:id — Update adjustment
+DELETE /admin/cart-adjustments/:cart_id/:id — Delete adjustment
+PATCH  /admin/cart-adjustments/:cart_id/batch — Batch update
+DELETE /admin/cart-adjustments/:cart_id/batch — Batch delete
 
 ## [DEPS]
-@medusajs/framework 2.14.2: core Medusa utilities, MedusaService, query, workflow primitives
-@medusajs/medusa 2.14.2: updateCartPromotionsWorkflow, completeCartWorkflow, addToCartWorkflow hooks
-@medusajs/ui 4.1.9: Drawer, Prompt, ToggleGroup, and other admin UI components
-@retailos-ai/rms-medusa-ui ^1.2.1: organization's custom Medusa UI package
-react 19 / react-hook-form: admin widget form state and validation
+
+@medusajs/framework 2.15.2: Core Medusa framework (modules, workflows, hooks)
+@medusajs/medusa 2.15.2: Medusa application server
+@medusajs/admin-sdk 2.15.2: Admin widget injection (defineWidgetConfig)
+@medusajs/ui 4.1.12: Admin UI components (Drawer, Prompt, Badge, Switch, Tooltip)
+@medusajs/icons 2.1.3: Admin icon set
+@retailos-ai/rms-medusa-ui ^1.2.3: Custom UI components (RouteFocusModal)
+react 19.0.0: Admin UI rendering
+react-hook-form 7.54.2: Form state management in rule editor
+@tanstack/react-query 5.64.2: Server state management for admin hooks
 
 ## [DEV]
-Setup:  yarn install
-Test:   yarn test                          (jest unit tests)
-        yarn test:integration:modules      (integration tests — module layer)
-        yarn test:integration:http         (integration tests — HTTP layer)
-Build:  yarn build                         (medusa plugin:build)
-Dev:    yarn dev                           (medusa plugin:develop — live reload against local Medusa)
+
+Setup:   yarn install
+Test:    yarn test (jest unit tests) | yarn test:integration:modules | yarn test:integration:http
+Build:   yarn build (medusa plugin:build)
+Dev:     yarn dev (medusa plugin:develop — live reload against local Medusa)
+Release: yarn release (changeset publish)

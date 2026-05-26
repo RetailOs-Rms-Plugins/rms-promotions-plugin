@@ -10,6 +10,7 @@ import {
   updatePromotionExtConfigsWorkflow,
 } from "../../../../workflows/promotion-ext"
 import { PROMOTION_EXT_CONFIG_MODEL } from "../../../../modules/promotion-ext/constants"
+import { validatePromotionModeCompatibility } from "../mode-validation"
 
 export const GET = async (
   req: MedusaRequest,
@@ -42,6 +43,26 @@ export const PATCH = async (
 ) => {
   const { id } = req.params
   const query = req.scope.resolve(ContainerRegistrationKeys.QUERY)
+
+  if (req.validatedBody.promotion_mode && req.validatedBody.promotion_mode !== "standard") {
+    const {
+      data: [existingConfig],
+    } = await query.graph({
+      entity: PROMOTION_EXT_CONFIG_MODEL,
+      fields: ["promotion_id"],
+      filters: { id },
+    })
+
+    if (!existingConfig) {
+      throw new MedusaError(MedusaError.Types.NOT_FOUND, `Promotion ext config with id "${id}" not found`)
+    }
+
+    await validatePromotionModeCompatibility(
+      query,
+      (existingConfig as any).promotion_id,
+      req.validatedBody.promotion_mode
+    )
+  }
 
   const { result } = await updatePromotionExtConfigsWorkflow(req.scope).run({
     input: { items: [{ id, ...req.validatedBody }] },

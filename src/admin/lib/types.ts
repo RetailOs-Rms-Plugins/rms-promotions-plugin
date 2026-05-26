@@ -68,15 +68,15 @@ export type PromotionMode = "standard" | "bundle" | "buyget_repeat"
 
 export type BundleModeConfig = {
   bundle_size: number
-  bundle_price: number
+  bundle_price?: number
   remainder: "full_price"
 }
 
 export type BuyGetRepeatModeConfig = {
   buy_quantity: number
   get_quantity: number
-  discount_type: "percentage" | "fixed"
-  discount_value: number
+  discount_type?: "percentage" | "fixed"
+  discount_value?: number
   discount_target: "cheapest"
   remainder: "full_price"
 }
