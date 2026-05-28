@@ -60,7 +60,8 @@ export const PATCH = async (
     await validatePromotionModeCompatibility(
       query,
       (existingConfig as any).promotion_id,
-      req.validatedBody.promotion_mode
+      req.validatedBody.promotion_mode,
+      req.validatedBody.mode_config
     )
   }
 

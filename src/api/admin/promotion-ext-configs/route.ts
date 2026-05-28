@@ -64,7 +64,8 @@ export const POST = async (
     await validatePromotionModeCompatibility(
       query,
       req.validatedBody.promotion_id,
-      req.validatedBody.promotion_mode
+      req.validatedBody.promotion_mode,
+      req.validatedBody.mode_config
     )
   }
 
