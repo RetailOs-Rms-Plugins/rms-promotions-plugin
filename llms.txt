@@ -1,6 +1,6 @@
 ---
 name: @retailos-ai/rms-promotions-extension
-version: 1.0.3
+version: 1.1.0
 language: TypeScript
 license: MIT
 entry: src/modules/promotion-ext/index.ts
@@ -13,12 +13,12 @@ repo: https://github.com/RetailOs-Rms-Plugins/rms-promotions-plugin.git
 # L33   [INSTALL]     —  Requirements and installation commands
 # L56   [QUICKSTART]  —  Minimal working example with curl
 # L81   [USAGE]       —  Rule fields, promotion modes, manual adjustments, enforcement layers
-# L176  [IMPLEMENT]   —  Consumer integration recipes with code examples
-# L304  [CONFIG]      —  Promotion ext config fields and mode_config shapes
-# L329  [STRUCTURE]   —  File and directory layout
-# L357  [API]         —  All REST endpoints with methods and paths
-# L389  [DEPS]        —  Key dependencies
-# L401  [DEV]         —  Development setup, test, and build commands
+# L169  [IMPLEMENT]   —  Consumer integration recipes: API + UI guides with full examples
+# L367  [CONFIG]      —  Promotion ext config fields and mode_config shapes
+# L392  [STRUCTURE]   —  File and directory layout
+# L420  [API]         —  All REST endpoints with methods and paths
+# L452  [DEPS]        —  Key dependencies
+# L464  [DEV]         —  Development setup, test, and build commands
 
 ## [OVERVIEW]
 
@@ -119,22 +119,14 @@ Fixed price for N qualifying items, repeating. Example: "3 for 50".
 Requirements: Medusa promotion "Amount off products" (type: "fixed", target_type: "items")
 application_method.value = bundle target price
 mode_config = { bundle_size: number, remainder: "full_price" }
-
-```bash
-curl -X PATCH /admin/promotion-ext-configs/:id \
-  -d '{ "promotion_mode": "bundle", "mode_config": { "bundle_size": 3, "remainder": "full_price" } }'
-```
+IMPORTANT: max_quantity must be >= bundle_size, or null (unlimited). If max_quantity < bundle_size, no bundles can form.
 
 #### Buy-Get Repeat
 Buy X at full price, get Y discounted, repeating. Example: "buy 2 get 1 free".
 Requirements: product-level type (target_type: "items")
 application_method.type = "fixed"|"percentage", application_method.value = discount
 mode_config = { buy_quantity: number, get_quantity: number, discount_target: "cheapest", remainder: "full_price" }
-
-```bash
-curl -X PATCH /admin/promotion-ext-configs/:id \
-  -d '{ "promotion_mode": "buyget_repeat", "mode_config": { "buy_quantity": 2, "get_quantity": 1, "discount_target": "cheapest", "remainder": "full_price" } }'
-```
+IMPORTANT: max_quantity must be >= buy_quantity, or null (unlimited). If max_quantity < buy_quantity, no cycles can form.
 
 Discount applies to cheapest qualifying items. Remainder items at full price.
 max_quantity on application_method caps participating items for bundle (only complete bundles form) or "buy" items for buy-get (cycles = floor(max_quantity / buy_quantity)). Note: for buy-get, this counts buy items not discounted items — deliberate business decision diverging from Medusa's native interpretation.
@@ -142,6 +134,7 @@ max_quantity on application_method caps participating items for bundle (only com
 #### Promotion Type Constraints (validated on create/update)
 Bundle requires type: "fixed" + target_type: "items"
 Buy-get requires target_type: "items" (fixed or percentage)
+Bundle requires value > 0
 "Amount off order", "Buy X Get Y", "Free shipping" are incompatible
 
 ### Manual Cart Adjustments
@@ -175,7 +168,118 @@ For non-standard modes, Medusa's computeActions still runs and produces adjustme
 
 ## [IMPLEMENT]
 
-### Adding cart-state rules to a Medusa promotion
+### End-to-end: Bundle promotion "2 for 120" via API
+
+When to use: you want N qualifying items to cost a fixed combined price, repeating
+
+Prerequisites:
+- Medusa running with the plugin installed and migrations applied
+- Admin API access (Bearer token or session)
+
+```bash
+# Step 1: Create the Medusa promotion
+# type: "fixed", target_type: "items", value: 120 (bundle target price)
+# max_quantity: null (unlimited) — or at least >= bundle_size (2)
+# is_automatic: false (required)
+curl -X POST http://localhost:9000/admin/promotions \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "BUNDLE2FOR120",
+    "is_automatic": false,
+    "type": "standard",
+    "status": "active",
+    "application_method": {
+      "type": "fixed",
+      "target_type": "items",
+      "value": 120,
+      "currency_code": "eur",
+      "target_rules": [
+        { "attribute": "items.product.id", "operator": "in", "values": ["prod_REPLACE_ME"] }
+      ]
+    }
+  }'
+# -> { "promotion": { "id": "promo_abc123", ... } }
+
+# Step 2: Create the ext config with bundle mode
+curl -X POST http://localhost:9000/admin/promotion-ext-configs \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "promotion_id": "promo_abc123",
+    "auto_apply": true,
+    "promotion_mode": "bundle",
+    "mode_config": { "bundle_size": 2, "remainder": "full_price" }
+  }'
+```
+
+Result: cart with 2 qualifying items (65 each, 130 total) gets 10 discount (130 - 120 = 10), total 120.
+
+### End-to-end: Buy-get promotion "buy 2 get 1 free" via API
+
+When to use: buy X at full price, get Y discounted, repeating for every qualifying group
+
+```bash
+# Step 1: Create the Medusa promotion
+# type: "percentage", target_type: "items", value: 100 (100% off = free)
+curl -X POST http://localhost:9000/admin/promotions \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "B2G1FREE",
+    "is_automatic": false,
+    "type": "standard",
+    "status": "active",
+    "application_method": {
+      "type": "percentage",
+      "target_type": "items",
+      "value": 100,
+      "target_rules": [
+        { "attribute": "items.product.id", "operator": "in", "values": ["prod_REPLACE_ME"] }
+      ]
+    }
+  }'
+# -> { "promotion": { "id": "promo_xyz789", ... } }
+
+# Step 2: Create the ext config with buy-get repeat mode
+curl -X POST http://localhost:9000/admin/promotion-ext-configs \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "promotion_id": "promo_xyz789",
+    "auto_apply": true,
+    "promotion_mode": "buyget_repeat",
+    "mode_config": { "buy_quantity": 2, "get_quantity": 1, "discount_target": "cheapest", "remainder": "full_price" }
+  }'
+```
+
+Result: cart with 3 qualifying items (30 each, 90 total) gets cheapest item free — 30 discount, total 60.
+
+### End-to-end: Bundle promotion via Admin UI
+
+When to use: same as API but configured through the Medusa admin dashboard
+
+1. Go to Promotions -> Create Promotion
+2. Set Code (e.g. BUNDLE2FOR120), Status: Active, Is Automatic: off
+3. Set Type to "Amount off products", Amount to the bundle target price (e.g. 120)
+4. Under Target Rules, add a product rule to scope qualifying products
+5. Set Maximum Quantity >= bundle size (e.g. 2+), or leave blank for unlimited
+6. Save the promotion
+7. Scroll to the "How is the discount applied?" widget
+8. Click ... -> Edit, select Bundle Pricing, set Bundle Size to 2, Save
+
+IMPORTANT: If Maximum Quantity < bundle size, no bundles form. The widget shows a red warning when this happens.
+
+### End-to-end: Buy-get promotion via Admin UI
+
+1. Create promotion with Type: "Percentage off product", Percentage: 100 (= free)
+2. Set Is Automatic: off, add Target Rules for qualifying products
+3. Set Maximum Quantity >= buy quantity (e.g. 2+), or leave blank
+4. Save the promotion
+5. Scroll to "How is the discount applied?" widget
+6. Click ... -> Edit, select Buy-Get Repeat, set Buy: 2, Get: 1, Save
+
+### Adding cart-state rules to a promotion
 
 When to use: you want a promotion to activate/deactivate based on live cart state (subtotal, quantities, customer history)
 
@@ -184,7 +288,6 @@ Prerequisites:
 - Plugin installed and migrations run
 
 ```ts
-// In your admin panel or backend script:
 const sdk = /* your Medusa admin SDK instance */
 
 // 1. Create config
@@ -211,59 +314,14 @@ await sdk.client.fetch("/admin/promotion-ext-rules/batch", {
 })
 ```
 
-### Setting up bundle pricing
+### Adding cart-state rules via Admin UI
 
-When to use: "3 for 50" style promotions where N items have a fixed combined price
-
-Prerequisites:
-- Medusa promotion created as "Amount off products" (type: "fixed", target_type: "items")
-- application_method.value set to the bundle price (e.g. 5000 for 50.00 in cents)
-- application_method.max_quantity set if you want to cap participating items (optional, only complete bundles form)
-- target_rules configured for which products qualify
-
-```ts
-// After creating the promotion in Medusa with type: "fixed", value: 5000
-await sdk.client.fetch("/admin/promotion-ext-configs", {
-  method: "POST",
-  body: {
-    promotion_id: "promo_bundle",
-    auto_apply: true,
-    promotion_mode: "bundle",
-    mode_config: { bundle_size: 3, remainder: "full_price" }
-  }
-})
-```
-
-The calculator expands all eligible items into individual units, forms complete bundles of `bundle_size`, computes savings (original total - bundles * bundle_price), and distributes savings proportionally by unit price. Remainder items pay full price.
-
-### Setting up buy-get repeat
-
-When to use: "buy 2 get 1 free" or "buy 3 get 1 at 50% off" repeating for every qualifying group
-
-Prerequisites:
-- Medusa promotion created as product-level type (target_type: "items")
-- application_method.type = "percentage" or "fixed"
-- application_method.value = discount (e.g. 100 for 100% off = free, 50 for 50% off)
-- application_method.max_quantity set to cap "buy" items (cycles = floor(max_quantity / buy_quantity), optional)
-
-```ts
-await sdk.client.fetch("/admin/promotion-ext-configs", {
-  method: "POST",
-  body: {
-    promotion_id: "promo_buyget",
-    auto_apply: true,
-    promotion_mode: "buyget_repeat",
-    mode_config: {
-      buy_quantity: 2,
-      get_quantity: 1,
-      discount_target: "cheapest",
-      remainder: "full_price"
-    }
-  }
-})
-```
-
-Items are sorted by price ascending. In each group, the cheapest get_quantity items receive the discount. For percentage: discount = floor(unit_price * value / 100). For fixed: discount = min(value, unit_price).
+1. Navigate to Promotions -> [your promotion], scroll to "When will this promotion be applied?" widget
+2. Click + Add rules or ... -> Edit
+3. Toggle Auto Apply on/off
+4. Set the group combinator (AND/OR between groups)
+5. Add rule group -> configure rules (field, operator, value) inside each group
+6. Click Save
 
 ### Creating manual cart adjustments from storefront server
 
@@ -294,12 +352,17 @@ Conventions:
 - All admin endpoints require Medusa admin authentication
 - No store-scoped adjustment endpoints exist -- customers must never self-discount
 - Adjustments are immediately applied via addLineItemAdjustments, not deferred to cart.updated
+- target_rules use Medusa's full-path attribute format: "items.product.id", "items.product.collection_id", etc.
 
 Troubleshooting:
 - "mode_config does not match bundle schema": mode_config shape must match the selected promotion_mode
 - "Bundle mode requires the promotion type Amount off products": change the Medusa promotion type to "Amount off products" (fixed)
+- "Maximum Quantity (N) is less than the bundle size (M)": set max_quantity >= bundle_size or leave unset
+- "Maximum Quantity (N) is less than the buy quantity (M)": set max_quantity >= buy_quantity or leave unset
+- "Bundle mode requires a positive bundle target price": set application_method.value > 0
 - Promotion not auto-applying: check auto_apply is true AND is_automatic is false on the Medusa promotion
 - Adjustments disappear after cart update: expected -- the subscriber re-applies from cart_ext_adjustment table on every update
+- No bundles forming despite correct config: verify max_quantity >= bundle_size and that target_rules match cart items
 
 ## [CONFIG]
 
@@ -323,24 +386,24 @@ Buy-get repeat mode_config:
 
 Reused application_method fields for non-standard modes:
   type: "fixed"|"percentage" — bundle requires "fixed"
-  value: number — bundle price or discount amount/%
-  max_quantity: number|null — bundle: max participating items; buy-get: max "buy" items
+  value: number — bundle price (must be > 0) or discount amount/%
+  max_quantity: number|null — bundle: >= bundle_size or null; buy-get: >= buy_quantity or null
 
 ## [STRUCTURE]
 
 src/admin/components/rules-editor/: Drawer-based rule editor with combinator toggles and group cards
-src/admin/components/promotion-mode/: Promotion mode display (read-only) and edit form
+src/admin/components/promotion-mode/: Promotion mode display (read-only with warnings) and edit form
 src/admin/hooks/: React Query hooks for configs, rule groups, rules (CRUD + batch)
 src/admin/widgets/promotion-rules-widget.tsx: Main widget injected at promotion.details.after
 src/admin/lib/types.ts: Admin TypeScript types
-src/api/admin/promotion-ext-configs/: Config REST routes, validators, mode validation
+src/api/admin/promotion-ext-configs/: Config REST routes, validators, mode validation (cross-validates max_quantity vs bundle_size/buy_quantity)
 src/api/admin/promotion-ext-rule-groups/: Rule group REST routes and validators
 src/api/admin/promotion-ext-rules/: Rule REST routes and validators
 src/api/admin/cart-adjustments/: Manual cart adjustment CRUD per cart
 src/lib/rule-evaluator.ts: Pure rule evaluation function (no DB, no side effects)
 src/lib/cart-enricher.ts: Builds EnrichedCart context with order history
 src/lib/adjustment-calculator.ts: Bundle and buy-get repeat computation
-src/lib/target-rule-evaluator.ts: Filters eligible cart items by target rules
+src/lib/target-rule-evaluator.ts: Filters eligible cart items by Medusa target rules (normalizes full-path attributes like "items.product.id")
 src/lib/adjustment-spread.ts: Proportional distribution of cart-wide adjustments
 src/modules/promotion-ext/models/: MikroORM entities (4 tables)
 src/modules/promotion-ext/service.ts: MedusaService with auto-generated CRUD

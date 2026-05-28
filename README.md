@@ -146,18 +146,53 @@ Set a fixed price for a group of qualifying items, repeating for every complete 
 - `application_method.value` = the bundle target price (e.g., 50 for "3 for 50")
 - `mode_config.bundle_size` = items per bundle (e.g., 3)
 
-**Item cap:** Set `application_method.max_quantity` to limit how many items can participate in bundles. Only complete bundles form — e.g., `max_quantity = 7` with `bundle_size = 3` yields 2 bundles (6 items). Leave unset for unlimited.
+**Item cap:** Set `application_method.max_quantity` to limit how many items can participate in bundles. Only complete bundles form — e.g., `max_quantity = 7` with `bundle_size = 3` yields 2 bundles (6 items). Leave unset for unlimited. **Important:** `max_quantity` must be >= `bundle_size`, otherwise no bundles can form.
+
+**End-to-end example — "2 for 120"** (items normally cost 65 each):
 
 ```bash
-# Set mode to bundle with bundle_size = 3
-curl -X PATCH /admin/promotion-ext-configs/:id \
+# Step 1: Create the Medusa promotion via admin API
+# type: "fixed", target_type: "items", value: 120 (the bundle target price)
+# max_quantity: null (unlimited) — or at least >= bundle_size (2)
+# is_automatic: false (required — the plugin controls application)
+# Add target_rules to scope which products qualify
+curl -X POST http://localhost:9000/admin/promotions \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
+    "code": "BUNDLE2FOR120",
+    "is_automatic": false,
+    "type": "standard",
+    "status": "active",
+    "application_method": {
+      "type": "fixed",
+      "target_type": "items",
+      "value": 120,
+      "currency_code": "eur",
+      "target_rules": [
+        {
+          "attribute": "items.product.id",
+          "operator": "in",
+          "values": ["prod_REPLACE_ME"]
+        }
+      ]
+    }
+  }'
+# -> { "promotion": { "id": "promo_abc123", ... } }
+
+# Step 2: Create the ext config with bundle mode
+curl -X POST http://localhost:9000/admin/promotion-ext-configs \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "promotion_id": "promo_abc123",
+    "auto_apply": true,
     "promotion_mode": "bundle",
-    "mode_config": { "bundle_size": 3, "remainder": "full_price" }
+    "mode_config": { "bundle_size": 2, "remainder": "full_price" }
   }'
 ```
+
+Result: a cart with 2 qualifying items (65 each, 130 total) gets a 10 discount (130 - 120 = 10), total 120.
 
 #### Buy-Get Repeat
 
@@ -170,14 +205,45 @@ Buy X items at full price, get Y items discounted — repeating for every qualif
 - `mode_config.buy_quantity` = items at full price per group
 - `mode_config.get_quantity` = items discounted per group
 
-**Buy item cap:** Set `application_method.max_quantity` to limit how many "buy" items can participate. Cycles = `floor(max_quantity / buy_quantity)` — e.g., `max_quantity = 4` with `buy_quantity = 3` yields 1 cycle. **Note:** this counts buy items, not discounted items — see CONTEXT.md for the semantic rationale. Leave unset for unlimited.
+**Buy item cap:** Set `application_method.max_quantity` to limit how many "buy" items can participate. Cycles = `floor(max_quantity / buy_quantity)` — e.g., `max_quantity = 4` with `buy_quantity = 3` yields 1 cycle. **Note:** this counts buy items, not discounted items — see CONTEXT.md for the semantic rationale. Leave unset for unlimited. **Important:** `max_quantity` must be >= `buy_quantity`, otherwise no cycles can form.
+
+**End-to-end example — "buy 2 get 1 free"** (items cost 30 each):
 
 ```bash
-# Set mode to buy-get repeat: buy 2 get 1 free
-curl -X PATCH /admin/promotion-ext-configs/:id \
+# Step 1: Create the Medusa promotion via admin API
+# type: "percentage", target_type: "items", value: 100 (100% off = free)
+# max_quantity: null (unlimited) — or at least >= buy_quantity (2)
+# is_automatic: false (required)
+curl -X POST http://localhost:9000/admin/promotions \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
+    "code": "B2G1FREE",
+    "is_automatic": false,
+    "type": "standard",
+    "status": "active",
+    "application_method": {
+      "type": "percentage",
+      "target_type": "items",
+      "value": 100,
+      "target_rules": [
+        {
+          "attribute": "items.product.id",
+          "operator": "in",
+          "values": ["prod_REPLACE_ME"]
+        }
+      ]
+    }
+  }'
+# -> { "promotion": { "id": "promo_xyz789", ... } }
+
+# Step 2: Create the ext config with buy-get repeat mode
+curl -X POST http://localhost:9000/admin/promotion-ext-configs \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "promotion_id": "promo_xyz789",
+    "auto_apply": true,
     "promotion_mode": "buyget_repeat",
     "mode_config": {
       "buy_quantity": 2,
@@ -187,6 +253,8 @@ curl -X PATCH /admin/promotion-ext-configs/:id \
     }
   }'
 ```
+
+Result: a cart with 3 qualifying items (30 each, 90 total) gets the cheapest item free — 30 discount, total 60.
 
 The discount always applies to the cheapest qualifying items. Remaining items (those that don't complete a full group) pay full price.
 
@@ -339,6 +407,24 @@ The plugin injects two widgets at the bottom of every promotion detail page in M
 3. Configure mode-specific fields (bundle size, buy/get quantities)
 4. Note: `value`, `type`, and `max_quantity` are shown as read-only — edit them in the Medusa promotion settings above
 5. Click **Save**
+
+**Setting up a bundle promotion via the UI — "2 for 120":**
+
+1. Create a new promotion in **Promotions** -> **Create Promotion**
+2. Set **Code** (e.g., `BUNDLE2FOR120`), **Status** to Active, and **Is Automatic** to off
+3. Set **Type** to "Amount off products" and **Amount** to `120` (the bundle target price)
+4. Under **Target Rules**, add a product rule to scope which products qualify
+5. Set **Maximum Quantity** to at least the bundle size (e.g., `2` or higher), or leave blank for unlimited. If `max_quantity` is less than the bundle size, no bundles can form and a warning will appear in the mode widget.
+6. Save the promotion, then scroll down to the **"How is the discount applied?"** widget
+7. Click **...** -> **Edit**, select **Bundle Pricing**, set **Bundle Size** to `2`, and save
+
+**Setting up a buy-get promotion via the UI — "buy 2 get 1 free":**
+
+1. Create a new promotion with **Type** "Percentage off product" and **Percentage** `100` (100% off = free)
+2. Set **Is Automatic** to off, add **Target Rules** for qualifying products
+3. Set **Maximum Quantity** to at least the buy quantity (e.g., `2` or higher), or leave blank for unlimited
+4. Save the promotion, then scroll to **"How is the discount applied?"** widget
+5. Click **...** -> **Edit**, select **Buy-Get Repeat**, set **Buy** to `2` and **Get** to `1`, and save
 
 ## API
 
