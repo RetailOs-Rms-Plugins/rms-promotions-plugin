@@ -16,6 +16,7 @@ type AdminPromotion = {
     value?: number
     target_type?: string
     max_quantity?: number | null
+    currency_code?: string
   }
 }
 
