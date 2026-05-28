@@ -25,10 +25,24 @@ const attributeExtractors: Record<string, AttributeExtractor> = {
   product_tag: (item) => (item.product?.tags ?? []).map((t) => t.id),
 }
 
+// Medusa stores target rule attributes as full paths (e.g. "items.product.id");
+// normalize to the short keys used by attributeExtractors.
+const medusaAttributeAliases: Record<string, string> = {
+  "items.product.id": "product",
+  "items.product.collection_id": "product_collection",
+  "items.product.categories.id": "product_category",
+  "items.product.type_id": "product_type",
+  "items.product.tags.id": "product_tag",
+}
+
+function normalizeAttribute(attr: string): string {
+  return medusaAttributeAliases[attr] ?? attr
+}
+
 function matchesRule(item: CartItemForTargetRules, rule: TargetRule): boolean {
-  const extractor = attributeExtractors[rule.attribute]
+  const extractor = attributeExtractors[normalizeAttribute(rule.attribute)]
   if (!extractor) {
-    throw new Error(`Unknown target rule attribute: "${rule.attribute}". Supported: ${Object.keys(attributeExtractors).join(", ")}`)
+    throw new Error(`Unknown target rule attribute: "${rule.attribute}". Supported: ${Object.keys(attributeExtractors).join(", ")} (also accepted as ${Object.keys(medusaAttributeAliases).join(", ")})`)
   }
 
   const itemValues = extractor(item)

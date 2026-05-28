@@ -124,6 +124,40 @@ describe("filterEligibleItems", () => {
     expect(result).toHaveLength(2)
   })
 
+  it("normalizes Medusa full-path attributes (e.g. items.product.id → product)", () => {
+    const items = [
+      makeItem({ id: "item_1", product_id: "prod_a" }),
+      makeItem({ id: "item_2", product_id: "prod_b" }),
+    ]
+    const rules: TargetRule[] = [
+      { attribute: "items.product.id", operator: "in", values: ["prod_a"] },
+    ]
+
+    const result = filterEligibleItems(items, rules)
+    expect(result.map((i) => i.id)).toEqual(["item_1"])
+  })
+
+  it("normalizes all Medusa full-path attribute variants", () => {
+    const items = [
+      makeItem({
+        id: "item_1",
+        product_id: "prod_a",
+        product: {
+          collection_id: "col_x",
+          categories: [{ id: "cat_y" }],
+          type_id: "type_z",
+          tags: [{ id: "tag_w" }],
+        },
+      }),
+    ]
+
+    expect(filterEligibleItems(items, [{ attribute: "items.product.id", operator: "in", values: ["prod_a"] }])).toHaveLength(1)
+    expect(filterEligibleItems(items, [{ attribute: "items.product.collection_id", operator: "in", values: ["col_x"] }])).toHaveLength(1)
+    expect(filterEligibleItems(items, [{ attribute: "items.product.categories.id", operator: "in", values: ["cat_y"] }])).toHaveLength(1)
+    expect(filterEligibleItems(items, [{ attribute: "items.product.type_id", operator: "in", values: ["type_z"] }])).toHaveLength(1)
+    expect(filterEligibleItems(items, [{ attribute: "items.product.tags.id", operator: "in", values: ["tag_w"] }])).toHaveLength(1)
+  })
+
   it("supports nin operator to exclude matching items", () => {
     const items = [
       makeItem({ id: "item_1", product_id: "prod_a" }),

@@ -6,6 +6,7 @@ type ApplicationMethod = {
   type?: string
   value?: number
   max_quantity?: number | null
+  currency_code?: string
 }
 
 const MODE_LABELS: Record<PromotionMode, string> = {
@@ -37,24 +38,36 @@ function ReadOnlyRow({ label, tooltip, children }: { label: string; tooltip: str
   )
 }
 
-function CurrencyValue({ amount }: { amount: number }) {
+function CurrencyValue({ amount, currencyCode = "eur" }: { amount: number; currencyCode?: string }) {
+  const code = currencyCode.toUpperCase()
+  const formatted = new Intl.NumberFormat(undefined, { style: "currency", currency: code }).format(amount)
   return (
     <span className="flex items-center gap-x-2">
-      {amount}€
-      <Badge size="2xsmall" className="w-fit">EUR</Badge>
+      {formatted}
+      <Badge size="2xsmall" className="w-fit">{code}</Badge>
     </span>
   )
 }
 
+function MaxQuantityWarning({ message }: { message: string }) {
+  return (
+    <Text size="xsmall" className="text-ui-fg-error mt-1">
+      {message}
+    </Text>
+  )
+}
+
 function BundleDisplay({ config, applicationMethod }: { config: BundleModeConfig; applicationMethod?: ApplicationMethod }) {
+  const maxQtyTooLow = applicationMethod?.max_quantity != null && applicationMethod.max_quantity > 0 && applicationMethod.max_quantity < config.bundle_size
+
   return (
     <>
       <Row label="Bundle Size">{config.bundle_size} items</Row>
       <ReadOnlyRow label="Bundle Price" tooltip="This value comes from the promotion's Amount field.">
         {applicationMethod?.value != null ? (
-          <CurrencyValue amount={applicationMethod.value} />
+          <CurrencyValue amount={applicationMethod.value} currencyCode={applicationMethod.currency_code} />
         ) : config.bundle_price != null ? (
-          <CurrencyValue amount={config.bundle_price} />
+          <CurrencyValue amount={config.bundle_price} currencyCode={applicationMethod?.currency_code} />
         ) : (
           "-"
         )}
@@ -63,7 +76,12 @@ function BundleDisplay({ config, applicationMethod }: { config: BundleModeConfig
         {applicationMethod?.type === "percentage" ? "Percentage" : "Fixed"}
       </ReadOnlyRow>
       <ReadOnlyRow label="Max Items" tooltip="Maximum number of items that can participate in bundles. Only complete bundles form — partial groups are ignored. This value comes from the promotion's Maximum Quantity field.">
-        {applicationMethod?.max_quantity != null ? applicationMethod.max_quantity : "-"}
+        <div>
+          {applicationMethod?.max_quantity != null ? applicationMethod.max_quantity : "-"}
+          {maxQtyTooLow && (
+            <MaxQuantityWarning message={`Must be at least ${config.bundle_size} (bundle size) or unset. No bundles can form with this value.`} />
+          )}
+        </div>
       </ReadOnlyRow>
       <Row label="Remainder">Full Price</Row>
     </>
@@ -71,6 +89,8 @@ function BundleDisplay({ config, applicationMethod }: { config: BundleModeConfig
 }
 
 function BuyGetRepeatDisplay({ config, applicationMethod }: { config: BuyGetRepeatModeConfig; applicationMethod?: ApplicationMethod }) {
+  const maxQtyTooLow = applicationMethod?.max_quantity != null && applicationMethod.max_quantity > 0 && applicationMethod.max_quantity < config.buy_quantity
+
   return (
     <>
       <Row label="Buy">{config.buy_quantity} items</Row>
@@ -82,13 +102,18 @@ function BuyGetRepeatDisplay({ config, applicationMethod }: { config: BuyGetRepe
         {(applicationMethod?.value ?? config.discount_value) != null ? (
           (applicationMethod?.type ?? config.discount_type) === "percentage"
             ? `${applicationMethod?.value ?? config.discount_value}%`
-            : <CurrencyValue amount={(applicationMethod?.value ?? config.discount_value)!} />
+            : <CurrencyValue amount={(applicationMethod?.value ?? config.discount_value)!} currencyCode={applicationMethod?.currency_code} />
         ) : (
           "-"
         )}
       </ReadOnlyRow>
       <ReadOnlyRow label="Max Buy Items" tooltip="Maximum number of 'buy' items. Controls how many buy-get cycles can apply (cycles = max_quantity / buy_quantity). Note: this counts buy items, not discounted items. This value comes from the promotion's Maximum Quantity field.">
-        {applicationMethod?.max_quantity != null ? applicationMethod.max_quantity : "-"}
+        <div>
+          {applicationMethod?.max_quantity != null ? applicationMethod.max_quantity : "-"}
+          {maxQtyTooLow && (
+            <MaxQuantityWarning message={`Must be at least ${config.buy_quantity} (buy quantity) or unset. No buy-get cycles can form with this value.`} />
+          )}
+        </div>
       </ReadOnlyRow>
       <Row label="Applies to">Cheapest item</Row>
       <Row label="Remainder">Full Price</Row>

@@ -11,6 +11,7 @@ type ApplicationMethod = {
   value?: number
   target_type?: string
   max_quantity?: number | null
+  currency_code?: string
 }
 
 type FormValues = {
@@ -114,11 +115,17 @@ export function PromotionModeForm({
     }
 
     const modeConfig = buildModeConfig(values)
-    await mutateAsync({
-      id: configId,
-      promotion_mode: values.promotion_mode,
-      mode_config: modeConfig,
-    })
+    try {
+      await mutateAsync({
+        id: configId,
+        promotion_mode: values.promotion_mode,
+        mode_config: modeConfig,
+      })
+    } catch (err: any) {
+      const message = err?.response?.data?.message ?? err?.message ?? "Failed to update promotion mode"
+      toast.error(message)
+      return
+    }
     queryClient.invalidateQueries({ queryKey: [PROMOTION_EXT_CONFIG_QUERY_KEY, promotionId] })
     toast.success("Promotion mode updated")
     isDirtyRef.current = false
