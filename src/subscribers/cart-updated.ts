@@ -228,6 +228,10 @@ export default async function cartUpdatedHandler({
             description: `${promotionMode === "bundle" ? "Bundle" : "Buy-get repeat"} promotion: ${promo.code}`,
           }))
         )
+      } else if (isApplied) {
+        await updateCartPromotionsWorkflow(container).run({
+          input: { cart_id: cartId, promo_codes: [promo.code], action: PromotionActions.REMOVE },
+        })
       }
     }
   }
