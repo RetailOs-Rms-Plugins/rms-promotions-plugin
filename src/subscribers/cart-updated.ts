@@ -105,7 +105,7 @@ export default async function cartUpdatedHandler({
     })
   }
 
-  const appliedPromotionCodes = [...appliedCodes, ...actualToAdd]
+  const appliedPromotionCodes = [...appliedCodes, ...actualToAdd].filter((c) => !actualToRemove.includes(c))
 
   await computeNonStandardAdjustments(cartId, container, {
     appliedPromotionCodes,
