@@ -6,6 +6,17 @@ import { spreadCartAdjustment } from "./adjustment-spread"
 import { computeBundle, computeBuyGetRepeat } from "./adjustment-calculator"
 import { filterEligibleItems, type CartItemForTargetRules } from "./target-rule-evaluator"
 
+const applyLocks = new Map<string, Promise<void>>()
+
+function withApplyLock(cartId: string, fn: () => Promise<void>): Promise<void> {
+  const chain = (applyLocks.get(cartId) ?? Promise.resolve()).then(fn, fn)
+  applyLocks.set(cartId, chain)
+  chain.finally(() => {
+    if (applyLocks.get(cartId) === chain) applyLocks.delete(cartId)
+  })
+  return chain
+}
+
 export async function computeNonStandardAdjustments(
   cartId: string,
   container: any,
@@ -141,7 +152,7 @@ export async function computeNonStandardAdjustments(
     }
   }
 
-  await applyExtAdjustmentsToCart(cartId, nonStandardConfigs, container)
+  await withApplyLock(cartId, () => applyExtAdjustmentsToCart(cartId, nonStandardConfigs, container))
 }
 
 async function resolveAppliedCodes(
@@ -196,7 +207,8 @@ async function applyExtAdjustmentsToCart(
   const customAdjustments: { item_id: string; code: string; amount: number; description?: string; promotion_id?: string; provider_id?: string }[] = []
 
   const itemSpecific = cartExtAdjustments.filter((adj: any) => adj.item_id)
-  for (const adj of itemSpecific) {
+  const deduped = deduplicateExtAdjustments(itemSpecific)
+  for (const adj of deduped) {
     customAdjustments.push({
       item_id: (adj as any).item_id,
       code: (adj as any).code,
@@ -233,4 +245,19 @@ async function applyExtAdjustmentsToCart(
 
   const finalAdjustments = [...preservedAdjustments, ...customAdjustments]
   await cartModule.setLineItemAdjustments(cartId, finalAdjustments)
+}
+
+function deduplicateExtAdjustments(adjustments: any[]): any[] {
+  const seen = new Map<string, any>()
+  for (const adj of adjustments) {
+    if (!adj.promotion_id) {
+      seen.set(adj.id ?? `manual_${seen.size}`, adj)
+      continue
+    }
+    const key = `${adj.promotion_id}:${adj.item_id}`
+    if (!seen.has(key)) {
+      seen.set(key, adj)
+    }
+  }
+  return Array.from(seen.values())
 }
