@@ -8,7 +8,7 @@ Medusa's native promotion system handles discount calculation well, but its elig
 
 - **Six rule fields**: `subtotal`, `totalQuantity`, `quantityOfProduct`, `quantityOfCollection`, `usesPerCustomer`, `firstOrder`
 - **Configurable combinators**: AND/OR within groups and between groups (DNF by default — any group triggers the promotion, all rules in a group must pass)
-- **Three-layer enforcement**: synchronous code gate -> async auto-apply engine -> synchronous checkout gate
+- **Three-layer enforcement**: synchronous code gate -> synchronous auto-apply (route overrides + workflow hook) with async fallback -> synchronous checkout gate
 - **Auto-apply flag**: promotions are automatically added/removed from carts as cart state changes
 - **Promotion modes**: standard (Medusa native), bundle pricing, and buy-get repeat — with item caps via `max_quantity`
 - **Manual cart adjustments**: operator-created discounts/surcharges per cart, item-level or cart-wide
@@ -281,7 +281,8 @@ Amount follows Medusa's convention: positive = discount, negative = surcharge. C
 | Layer | When | Mechanism | Effect on failure |
 |---|---|---|---|
 | 1 -- Code Gate | Customer enters promo code | `updateCartPromotionsWorkflow.hooks.validate` (sync) | HTTP 400, cart unchanged |
-| 2 -- Auto-Apply | After any cart mutation | `cart.updated` subscriber (async) | Adds/removes promotion silently |
+| 2 -- Sync Apply | During cart mutation | Custom store route overrides + `refreshCartItemsWorkflow.hooks.beforeRefreshingPaymentCollection` | Auto-apply eval + non-standard adjustments before API response |
+| 2b -- Async Fallback | After any cart mutation | `cart.updated` subscriber (async) | Same as Layer 2, for mutation paths not covered by route overrides |
 | 3 -- Checkout Gate | Before order is placed | `completeCartWorkflow.hooks.validate` (sync) | HTTP 400, order blocked |
 
 ## Creating Rules
@@ -480,23 +481,31 @@ src/
       promotion-mode/              Promotion mode display + edit form (bundle/buyget config)
     hooks/                         React Query hooks for all REST resources
     widgets/                       promotion-rules-widget.tsx — injected at promotion.details.after
-  api/admin/
-    promotion-ext-configs/         REST routes, validators, query config, mode validation
-    promotion-ext-rule-groups/     REST routes, validators, query config
-    promotion-ext-rules/           REST routes, validators, query config
-    cart-adjustments/              Manual adjustment CRUD per cart
+  api/
+    admin/
+      promotion-ext-configs/       REST routes, validators, query config, mode validation
+      promotion-ext-rule-groups/   REST routes, validators, query config
+      promotion-ext-rules/         REST routes, validators, query config
+      cart-adjustments/            Manual adjustment CRUD per cart
+    store/carts/
+      [id]/line-items/             Override: add/update/delete item with sync auto-apply + adjustments
+      [id]/promotions/             Override: promo code entry with sync non-standard adjustments
+      helpers.ts                   Shared refetchCart utility
   lib/
     rule-evaluator.ts              Pure rule evaluation — no DB calls, no side effects
     cart-enricher.ts               Builds EnrichedCart context (queries order history for usesPerCustomer)
     adjustment-calculator.ts       Bundle and buy-get repeat computation (reads from application_method)
     target-rule-evaluator.ts       Filters eligible cart items by target rules
     adjustment-spread.ts           Proportional distribution of cart-wide adjustments
+    compute-non-standard-adjustments.ts  Shared: computes bundle/buyget adjustments, merges with native
+    evaluate-auto-apply-promotions.ts    Shared: evaluates auto-apply rules, adds/removes promos
   modules/promotion-ext/
     models/                        MikroORM entities for 4 DB tables
     service.ts                     MedusaService (auto-generated CRUD for all 4 models)
     migrations/                    DB migrations
   subscribers/
-    cart-updated.ts                Layer 2: async auto-apply engine + adjustment computation
+    cart-updated.ts                Layer 2b: async fallback — auto-apply + code-applied re-eval
+    sync-non-standard-adjustments.ts  Layer 2: workflow hook — sync non-standard adjustments
     validate-cart-promotions.ts    Layer 1: synchronous code-entry gate
     validate-checkout.ts           Layer 3: synchronous checkout gate
     promotion-deleted.ts           Cleanup: cascade-deletes config on promotion.deleted
