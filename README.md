@@ -133,6 +133,19 @@ The `promotion_mode` field on `PromotionExtConfig` controls how a promotion's di
 | `value` | Discount amount or % | Bundle target price | Discount amount or % on "get" items |
 | `max_quantity` | Max items discounted | Max participating items (only complete bundles form) | Max "buy" items (cycles = floor(max_quantity / buy_quantity)) |
 
+#### Extended Promotion Compatibility
+
+When creating a Medusa promotion to use with the plugin's non-standard modes, the following settings are required:
+
+| Setting | Bundle | Buy-Get Repeat | Notes |
+|---|---|---|---|
+| Promotion type | Standard | Standard | "Buy X Get Y" is incompatible — it only fires once and has a different application_method structure |
+| Application method type | `"fixed"` (Amount off products) | `"fixed"` or `"percentage"` | Bundle requires a fixed target price |
+| Target type | `"items"` | `"items"` | Must target individual products, not order or shipping |
+| Allocation | `"each"` or `"once"` recommended | `"each"` or `"once"` recommended | `"across"` works but disables max_quantity (Medusa forbids max_quantity with "across"), meaning no quantity cap is possible |
+| Max quantity | >= bundle_size, or unset | >= buy_quantity, or unset | Required by Medusa when allocation is "each" or "once". Controls how many items participate in bundles/cycles |
+| Is automatic | `false` (required) | `false` (required) | The plugin owns auto-apply logic — Medusa's native auto-apply bypasses all plugin rules |
+
 #### Standard (default)
 
 Medusa's native `computeActions` handles the discount. The plugin does not intervene in calculation.

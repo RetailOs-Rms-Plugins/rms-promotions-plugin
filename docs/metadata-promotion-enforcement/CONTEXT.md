@@ -66,11 +66,15 @@ A field on `PromotionExtConfig` (`promotion_mode`) that controls **how** a promo
 
 Promotion mode is distinct from activation rules — activation rules gate **whether** the promotion fires; promotion mode controls **what happens** when it does.
 
-### Promotion Type Constraint
-Bundle and buy-get repeat modes reuse Medusa's native `application_method` fields (`type`, `value`, `max_quantity`) instead of storing discount parameters in custom fields. This means the Medusa promotion must be created with a compatible type:
+### Extended Promotion Compatibility
+Bundle and buy-get repeat modes reuse Medusa's native `application_method` fields (`type`, `value`, `max_quantity`) instead of storing discount parameters in custom fields. This means the Medusa promotion must be created with specific settings:
 
-- **Bundle** requires "Amount off products" (`type: "fixed"`, `target_type: "items"`) — a bundle price is a fixed target price, not a percentage.
-- **Buy-get repeat** requires any product-level type (`target_type: "items"`) — both "Amount off products" and "Percentage off product" are valid.
+- **Promotion type**: Must be "Standard". "Buy X Get Y" (`type: "buyget"`) is incompatible — it has a different `application_method` structure and only fires once (the plugin handles repetition).
+- **Bundle** requires `type: "fixed"`, `target_type: "items"` — a bundle price is a fixed target price, not a percentage.
+- **Buy-get repeat** requires `target_type: "items"` — both `type: "fixed"` and `type: "percentage"` are valid.
+- **Allocation**: `"each"` or `"once"` recommended. `"across"` works but Medusa forbids `max_quantity` when allocation is `"across"`, which means no quantity cap is possible — the plugin treats null `max_quantity` as unlimited bundles/cycles.
+- **max_quantity**: Required by Medusa when allocation is `"each"` or `"once"`. Must be >= `bundle_size` (bundle) or >= `buy_quantity` (buy-get repeat), or left unset for unlimited. The plugin validates this on create/update.
+- **is_automatic**: Must be `false`. The plugin owns auto-apply logic via Layer 2.
 
 "Amount off order", "Percentage off order", "Buy X Get Y", and "Free shipping" are all incompatible — they either lack item-level `target_rules` or have a different `application_method` structure. Validated on both the admin UI (toast error on save) and the backend API (HTTP 400 on create/update).
 

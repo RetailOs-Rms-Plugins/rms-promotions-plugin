@@ -12,13 +12,13 @@ repo: https://github.com/RetailOs-Rms-Plugins/rms-promotions-plugin.git
 # L23   [OVERVIEW]    —  What this plugin does and its core architecture
 # L33   [INSTALL]     —  Requirements and installation commands
 # L56   [QUICKSTART]  —  Minimal working example with curl
-# L81   [USAGE]       —  Rule fields, promotion modes, manual adjustments, enforcement layers
-# L170  [IMPLEMENT]   —  Consumer integration recipes: API + UI guides with full examples
-# L368  [CONFIG]      —  Promotion ext config fields and mode_config shapes
-# L393  [STRUCTURE]   —  File and directory layout with route overrides and shared libs
-# L428  [API]         —  All REST endpoints with methods and paths
-# L460  [DEPS]        —  Key dependencies
-# L472  [DEV]         —  Development setup, test, and build commands
+# L81   [USAGE]       —  Rule fields, promotion modes, compatibility matrix, enforcement layers
+# L176  [IMPLEMENT]   —  Consumer integration recipes: API + UI guides with full examples
+# L374  [CONFIG]      —  Promotion ext config fields and mode_config shapes
+# L399  [STRUCTURE]   —  File and directory layout with route overrides and shared libs
+# L434  [API]         —  All REST endpoints with methods and paths
+# L466  [DEPS]        —  Key dependencies
+# L478  [DEV]         —  Development setup, test, and build commands
 
 ## [OVERVIEW]
 
@@ -131,11 +131,17 @@ IMPORTANT: max_quantity must be >= buy_quantity, or null (unlimited). If max_qua
 Discount applies to cheapest qualifying items. Remainder items at full price.
 max_quantity on application_method caps participating items for bundle (only complete bundles form) or "buy" items for buy-get (cycles = floor(max_quantity / buy_quantity)). Note: for buy-get, this counts buy items not discounted items — deliberate business decision diverging from Medusa's native interpretation.
 
-#### Promotion Type Constraints (validated on create/update)
-Bundle requires type: "fixed" + target_type: "items"
-Buy-get requires target_type: "items" (fixed or percentage)
-Bundle requires value > 0
-"Amount off order", "Buy X Get Y", "Free shipping" are incompatible
+#### Extended Promotion Compatibility
+When creating a Medusa promotion for non-standard modes, these settings are required:
+- Promotion type: must be "Standard" (not "Buy X Get Y" — incompatible structure, only fires once)
+- target_type: "items" (must target individual products)
+- Bundle: am.type must be "fixed", am.value must be > 0
+- Buy-get: am.type "fixed" or "percentage"
+- Allocation: "each" or "once" recommended. "across" works but Medusa forbids max_quantity with it — no quantity cap possible.
+- max_quantity: required by Medusa when allocation is "each"/"once". Must be >= bundle_size (bundle) or >= buy_quantity (buyget). Null = unlimited.
+- is_automatic: must be false — plugin owns auto-apply logic
+- Incompatible types: "Amount off order", "Percentage off order", "Buy X Get Y", "Free shipping"
+All constraints validated on create/update (backend HTTP 400 + admin UI toast)
 
 ### Manual Cart Adjustments
 
