@@ -1,21 +1,8 @@
 import type { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { updateCartPromotionsWorkflowId } from "@medusajs/core-flows"
-import { ContainerRegistrationKeys, Modules, PromotionActions, remoteQueryObjectFromString, MedusaError } from "@medusajs/framework/utils"
+import { Modules, PromotionActions } from "@medusajs/framework/utils"
 import { computeNonStandardAdjustments } from "../../../../../lib/compute-non-standard-adjustments"
-
-async function refetchCart(id: string, scope: any, fields: string[]) {
-  const remoteQuery = scope.resolve(ContainerRegistrationKeys.REMOTE_QUERY)
-  const queryObject = remoteQueryObjectFromString({
-    entryPoint: "cart",
-    variables: { filters: { id } },
-    fields,
-  })
-  const [cart] = await remoteQuery(queryObject)
-  if (!cart) {
-    throw new MedusaError(MedusaError.Types.NOT_FOUND, `Cart with id '${id}' not found`)
-  }
-  return cart
-}
+import { refetchCart } from "../../helpers"
 
 export const POST = async (req: MedusaRequest, res: MedusaResponse) => {
   const we = req.scope.resolve(Modules.WORKFLOW_ENGINE)
