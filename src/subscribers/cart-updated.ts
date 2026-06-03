@@ -5,9 +5,14 @@ import { PROMOTION_EXT_MODULE } from "../modules/promotion-ext"
 import type PromotionExtModuleService from "../modules/promotion-ext/service"
 import { evaluatePromotion } from "../lib/rule-evaluator"
 import { buildEnrichedCart, loadConfigShape, passesNativeRules } from "../lib/cart-enricher"
+import { evaluateAutoApplyPromotions } from "../lib/evaluate-auto-apply-promotions"
 import { computeNonStandardAdjustments } from "../lib/compute-non-standard-adjustments"
 
 // Layer 2 — Auto-Apply Engine + Code-Applied Re-evaluation
+//
+// This subscriber is the async fallback for promotion evaluation. The primary
+// synchronous path is the custom store route overrides (src/api/store/carts/).
+// This subscriber covers cart mutation paths not covered by route overrides.
 export default async function cartUpdatedHandler({
   event: { data },
   container,
@@ -18,6 +23,11 @@ export default async function cartUpdatedHandler({
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
   const service: PromotionExtModuleService = container.resolve(PROMOTION_EXT_MODULE)
 
+  // ── Pass 1: Auto-apply evaluation (shared with route overrides) ──
+  const { added: actualToAdd, removed: actualToRemove } =
+    await evaluateAutoApplyPromotions(cartId, container)
+
+  // ── Pass 2: Re-evaluate code-applied promos with ext-rules ──
   const { data: cartList } = await query.graph({
     entity: "cart",
     fields: [
@@ -43,78 +53,11 @@ export default async function cartUpdatedHandler({
   const appliedCodes = new Set<string>((cart?.promotions ?? []).map((p: any) => p.code))
   const appliedPromoIds = new Set<string>((cart?.promotions ?? []).map((p: any) => p.id))
 
-  // ── Pass 1: Auto-apply evaluation ──
-  const autoApplyConfigs = await service.listPromotionExtConfigs({ auto_apply: true })
-  const autoApplyPromoIds = new Set(autoApplyConfigs.map((c) => c.promotion_id))
-
-  const actualToAdd: string[] = []
-  const actualToRemove: string[] = []
-
-  if (autoApplyConfigs.length) {
-    const promotionIds = autoApplyConfigs.map((c) => c.promotion_id)
-
-    const { data: promotions } = await query.graph({
-      entity: "promotion",
-      fields: [
-        "id",
-        "code",
-        "status",
-        "starts_at",
-        "ends_at",
-        "rules.attribute",
-        "rules.operator",
-        "rules.values.value",
-      ],
-      filters: { id: promotionIds },
-    })
-
-    const now = new Date()
-    const toAdd: string[] = []
-    const toRemove: string[] = []
-
-    for (const promotion of promotions) {
-      const configShape = await loadConfigShape(promotion.id, container)
-      if (!configShape) continue
-
-      const isActive =
-        promotion.status === "active" &&
-        (!promotion.starts_at || new Date(promotion.starts_at) <= now) &&
-        (!promotion.ends_at || new Date(promotion.ends_at) >= now) &&
-        passesNativeRules(promotion, cart)
-
-      if (!isActive) {
-        toRemove.push(promotion.code)
-        continue
-      }
-
-      const enrichedCart = await buildEnrichedCart(cartId, promotion.id, configShape, container)
-      const passes = evaluatePromotion(configShape, enrichedCart)
-
-      if (passes) {
-        toAdd.push(promotion.code)
-      } else {
-        toRemove.push(promotion.code)
-      }
-    }
-
-    actualToAdd.push(...toAdd.filter((code) => !appliedCodes.has(code)))
-    actualToRemove.push(...toRemove.filter((code) => appliedCodes.has(code)))
-
-    if (actualToAdd.length) {
-      await updateCartPromotionsWorkflow(container).run({
-        input: { cart_id: cartId, promo_codes: actualToAdd, action: PromotionActions.ADD },
-      })
-    }
-
-    if (actualToRemove.length) {
-      await updateCartPromotionsWorkflow(container).run({
-        input: { cart_id: cartId, promo_codes: actualToRemove, action: PromotionActions.REMOVE },
-      })
-    }
-  }
-
-  // ── Pass 2: Re-evaluate code-applied promos with ext-rules ──
   const allConfigs = await service.listPromotionExtConfigs({})
+  const autoApplyPromoIds = new Set(
+    allConfigs.filter((c: any) => c.auto_apply).map((c) => c.promotion_id)
+  )
+
   const codeAppliedToReEvaluate = allConfigs.filter((c) => {
     if (autoApplyPromoIds.has(c.promotion_id)) return false
     return appliedPromoIds.has(c.promotion_id)
