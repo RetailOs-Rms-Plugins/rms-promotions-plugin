@@ -33,11 +33,12 @@ The three-layer architecture this plugin uses to ensure a cart always has the co
 | Layer | Mechanism | When | Behavior |
 |---|---|---|---|
 | 1 — Code Gate | `updateCartPromotionsWorkflow.hooks.validate` | Before any promo code is applied (sync) | Throws `MedusaError` (HTTP 400) — blocks invalid manual additions |
-| 2 — Auto-Apply Engine | `cart.updated` subscriber | After any cart mutation (async) | Fetches only `auto_apply=true` configs from plugin DB, then fetches their promotions from Medusa, evaluates custom + native rules, computes delta (what to add / what to remove), applies changes. Short-circuits if no changes needed. |
+| 2 — Sync Apply | Custom store route overrides + `refreshCartItemsWorkflow.hooks.beforeRefreshingPaymentCollection` | During cart mutation (sync, before API response) | Route overrides run `evaluateAutoApplyPromotions` + `computeNonStandardAdjustments` after the workflow releases its lock. The hook computes non-standard adjustments for already-applied promos inside the workflow. API response includes correct promotions and adjustments. |
+| 2b — Async Fallback | `cart.updated` subscriber | After any cart mutation (async) | Same as Layer 2 — auto-apply evaluation, code-applied re-evaluation, non-standard adjustment computation. Covers mutation paths not handled by route overrides (e.g., shipping method changes, admin operations). |
 | 3 — Checkout Gate | `completeCartWorkflow.hooks.validate` | Before order is placed (sync) | Throws `MedusaError` — hard blocks checkout if any managed promotion violates its rules |
 
 ### Promotion Delta
-The result of comparing all auto-apply promotions against the cart's current state: `{ toAdd: string[], toRemove: string[] }`. Computed inline in `src/subscribers/cart-updated.ts`. Only managed promotions (those with a `promotion_ext_config` row where `auto_apply = true`) are included in the delta — unmanaged ones are never touched.
+The result of comparing all auto-apply promotions against the cart's current state: `{ added: string[], removed: string[] }`. Computed by the shared `evaluateAutoApplyPromotions` function, called from both route overrides (sync) and the subscriber (async fallback). Only managed promotions (those with a `promotion_ext_config` row where `auto_apply = true`) are included in the delta — unmanaged ones are never touched.
 
 ### Auto-Apply Loop Guard
 `updateCartPromotionsWorkflow` does not emit `cart.updated`. Therefore the subscriber calling it to add/remove promotions does not re-trigger itself. No loop. The short-circuit (return early when delta is empty) is still kept as defence-in-depth.
@@ -65,11 +66,15 @@ A field on `PromotionExtConfig` (`promotion_mode`) that controls **how** a promo
 
 Promotion mode is distinct from activation rules — activation rules gate **whether** the promotion fires; promotion mode controls **what happens** when it does.
 
-### Promotion Type Constraint
-Bundle and buy-get repeat modes reuse Medusa's native `application_method` fields (`type`, `value`, `max_quantity`) instead of storing discount parameters in custom fields. This means the Medusa promotion must be created with a compatible type:
+### Extended Promotion Compatibility
+Bundle and buy-get repeat modes reuse Medusa's native `application_method` fields (`type`, `value`, `max_quantity`) instead of storing discount parameters in custom fields. This means the Medusa promotion must be created with specific settings:
 
-- **Bundle** requires "Amount off products" (`type: "fixed"`, `target_type: "items"`) — a bundle price is a fixed target price, not a percentage.
-- **Buy-get repeat** requires any product-level type (`target_type: "items"`) — both "Amount off products" and "Percentage off product" are valid.
+- **Promotion type**: Must be "Standard". "Buy X Get Y" (`type: "buyget"`) is incompatible — it has a different `application_method` structure and only fires once (the plugin handles repetition).
+- **Bundle** requires `type: "fixed"`, `target_type: "items"` — a bundle price is a fixed target price, not a percentage.
+- **Buy-get repeat** requires `target_type: "items"` — both `type: "fixed"` and `type: "percentage"` are valid.
+- **Allocation**: `"each"` or `"once"` recommended. `"across"` works but Medusa forbids `max_quantity` when allocation is `"across"`, which means no quantity cap is possible — the plugin treats null `max_quantity` as unlimited bundles/cycles.
+- **max_quantity**: Required by Medusa when allocation is `"each"` or `"once"`. Must be >= `bundle_size` (bundle) or >= `buy_quantity` (buy-get repeat), or left unset for unlimited. The plugin validates this on create/update.
+- **is_automatic**: Must be `false`. The plugin owns auto-apply logic via Layer 2.
 
 "Amount off order", "Percentage off order", "Buy X Get Y", and "Free shipping" are all incompatible — they either lack item-level `target_rules` or have a different `application_method` structure. Validated on both the admin UI (toast error on save) and the backend API (HTTP 400 on create/update).
 
@@ -128,13 +133,14 @@ When multiple bundle/buy-get promotions target the same cart items, their adjust
 
 - All plugin-managed promotions must have `is_automatic: false` — using Medusa's native auto-apply for managed promotions will break the delta logic
 - No proxy-wrapping of Medusa services — risks documented in `proxy-wrapper-risks.md`
-- Layer 2 cannot be synchronous: `addToCartWorkflow` holds a cart lock when its hooks fire; nesting `updateCartPromotionsWorkflow` inside would deadlock
+- `evaluateAutoApplyPromotions` cannot be called from workflow hooks — hooks invoke workflows via `.run()` (standalone), which attempts to acquire the cart lock and deadlocks because the parent workflow still holds it. Lock-skipping only works with `.runAsStep()` (sub-workflow composition), which is not available inside hook handlers. Auto-apply evaluation runs in custom store route overrides AFTER the workflow releases its lock. See ADR-0007.
 - Layer 3 only validates — never mutates. Mutation belongs exclusively to Layer 2
 - Performance note: Layer 2 currently fetches all promotions on every cart update — acceptable for small catalogs, needs filtering at scale
 - `auto_apply` boolean column on `promotion_ext_config` controls whether Layer 2 manages a promotion. Code-only promotions (`auto_apply: false`) are never touched by Layer 2 — only Layer 1 (code entry) and Layer 3 (checkout) validate their rules.
-- Async window (accepted): the first HTTP response after a cart mutation does not reflect promotion changes — Layer 2 runs after the response is sent. Storefronts must refetch the cart after mutations. Moving Layer 2 into the synchronous path would require nesting `updateCartPromotionsWorkflow` inside a hook that already holds the cart lock — this deadlocks. The window is accepted; Layer 3 ensures no order is placed with an invalid state.
+- No async window for covered routes: store route overrides for add/update/delete line-items and promo code entry run auto-apply evaluation and non-standard adjustment computation synchronously before the API response. The `beforeRefreshingPaymentCollection` hook handles non-standard adjustments for already-applied promos inside the workflow. Only mutation paths NOT covered by route overrides (e.g., shipping method changes) have an async window — the subscriber handles these as a fallback. Layer 3 remains the safety net for all paths.
 - Bundle promotions must use Medusa "Amount off products" (`type: "fixed"`, `target_type: "items"`). Buy-get repeat promotions must use a product-level type (`target_type: "items"`). Neither mode may use Medusa's native `type: "buyget"` — it only fires once; the plugin's adjustment calculator handles repetition. Validated on create/update in both frontend and backend API.
-- `updateCartPromotionsWorkflow` has no hook between `computeActions` and `setLineItemAdjustments` — there is no way to inject custom adjustments into the atomic set. Custom adjustments must be re-applied after the wipe via `addLineItemAdjustments` in the `cart.updated` subscriber.
+- `updateCartPromotionsWorkflow` has no hook between `computeActions` and `setLineItemAdjustments` — there is no way to inject custom adjustments into the atomic set. Custom adjustments are re-applied via `setLineItemAdjustments` in the `beforeRefreshingPaymentCollection` hook (for already-applied promos) and in the route overrides / subscriber (for all promos).
+- `setLineItemAdjustments` is not concurrency-safe — concurrent calls can interleave reads/writes and produce duplicate adjustments. `applyExtAdjustmentsToCart` is serialized per cart via an in-memory lock, and ext adjustment rows are deduplicated before merging. See ADR-0006.
 - Cart extension adjustment rows are hard-deleted when: (a) their promotion is removed from the cart (engine-computed rows), (b) the operator explicitly deletes them (manual rows), or (c) the cart completes and becomes an order. The order's `OrderLineItemAdjustment` records are the permanent record.
 - Manual adjustment CRUD endpoints immediately apply changes to Medusa's cart adjustments (via `addLineItemAdjustments` or removal by matching `code`) — they do not wait for the next `cart.updated` cycle.
 - All cart adjustment admin endpoints require Medusa admin authentication. The storefront server can call admin endpoints using a secret API token for operator-initiated adjustments. No store-scoped adjustment endpoints exist — customers must never self-discount.
