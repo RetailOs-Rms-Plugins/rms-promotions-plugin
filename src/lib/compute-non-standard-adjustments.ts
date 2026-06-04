@@ -20,7 +20,7 @@ function withApplyLock(cartId: string, fn: () => Promise<void>): Promise<void> {
 export async function computeNonStandardAdjustments(
   cartId: string,
   container: any,
-  options?: { appliedPromotionCodes?: string[] }
+  options?: { appliedPromotionCodes?: string[]; insideHook?: boolean }
 ): Promise<void> {
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
   const service: PromotionExtModuleService = container.resolve(PROMOTION_EXT_MODULE)
@@ -147,7 +147,7 @@ export async function computeNonStandardAdjustments(
           is_tax_inclusive: (promo as any).is_tax_inclusive ?? false,
         }))
       )
-    } else if (isApplied) {
+    } else if (isApplied && !options?.insideHook) {
       await updateCartPromotionsWorkflow(container).run({
         input: { cart_id: cartId, promo_codes: [promo.code], action: PromotionActions.REMOVE },
       })
