@@ -1,6 +1,6 @@
 {
   "name": "@retailos-ai/rms-promotions-extension",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "A starter for Medusa plugins.",
   "author": "Medusa (https://medusajs.com)",
   "license": "MIT",
