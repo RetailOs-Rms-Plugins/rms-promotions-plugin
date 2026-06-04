@@ -101,6 +101,8 @@ Guest carts (no `customer_id`) pass `usesPerCustomer` and `firstOrder` rules unc
 
 **Required:** promotions managed by this plugin must have `is_automatic: false` in Medusa. Setting `is_automatic: true` causes Medusa to unconditionally re-apply the promotion, bypassing all plugin rules.
 
+**Note on code format:** Bundle and buy-get adjustments use the raw promotion code (e.g., `WC_BUNDLE_5`) as the adjustment code — matching Medusa's native convention. Manual adjustments use a synthetic `MANUAL_<id>` code since they have no backing promotion.
+
 ### Combinators
 
 Rules within a group are joined by `rules_combinator` (`"and"` | `"or"`, default `"and"`). Groups are joined by `include_groups_combinator` (`"and"` | `"or"`, default `"or"`). The defaults produce Disjunctive Normal Form — the same pattern used by Braze, Segment, and Shopify.
@@ -518,16 +520,18 @@ src/
     migrations/                    DB migrations
   subscribers/
     cart-updated.ts                Layer 2b: async fallback — auto-apply + code-applied re-eval
-    sync-non-standard-adjustments.ts  Layer 2: workflow hook — sync non-standard adjustments
+    sync-non-standard-adjustments.ts  Layer 2: workflow hook — sync non-standard adjustments (passes insideHook to avoid deadlock)
     validate-cart-promotions.ts    Layer 1: synchronous code-entry gate
     validate-checkout.ts           Layer 3: synchronous checkout gate
-    promotion-deleted.ts           Cleanup: cascade-deletes config on promotion.deleted
+    promotion-deleted.ts           Cleanup: soft-deletes config on promotion.deleted (hook + subscriber)
+    promotion-restored.ts          Restores soft-deleted config/groups/rules on promotion.restored
+    cart-completed.ts              Cleans up ext adjustments when a cart completes (order placed)
   types/                           TypeScript types for HTTP payloads and responses
   workflows/promotion-ext/         Medusa workflows for CRUD (used by API routes)
 docs/
   metadata-promotion-enforcement/
     CONTEXT.md                     Domain glossary
-    adr/                           Architecture Decision Records
+    adr/                           Architecture Decision Records (8 ADRs — see below)
 ```
 
 ## Contributing

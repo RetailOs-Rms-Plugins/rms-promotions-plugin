@@ -44,7 +44,9 @@ Use **custom store route overrides** for all storefront cart mutation endpoints.
 3. Calls `computeNonStandardAdjustments` for bundle/buyget adjustments
 4. Calls `refetchCart` and returns the response with correct data
 
-Additionally, a **workflow hook** on `refreshCartItemsWorkflow.hooks.beforeRefreshingPaymentCollection` runs `computeNonStandardAdjustments` (not `evaluateAutoApplyPromotions`) inside the workflow for promotions already on the cart. This does not deadlock because `computeNonStandardAdjustments` calls `setLineItemAdjustments` (a direct module method, not a workflow).
+Additionally, a **workflow hook** on `refreshCartItemsWorkflow.hooks.beforeRefreshingPaymentCollection` runs `computeNonStandardAdjustments` (not `evaluateAutoApplyPromotions`) inside the workflow for promotions already on the cart. The hook passes `{ insideHook: true }` to prevent `computeNonStandardAdjustments` from calling `updateCartPromotionsWorkflow` — which would deadlock for the same `.run()` vs `.runAsStep()` reason described above.
+
+> **Bug discovered 2026-06-04:** `computeNonStandardAdjustments` has a code path that calls `updateCartPromotionsWorkflow.run()` to remove a non-standard promotion when no cart items are eligible. This was not accounted for when the original ADR stated "calls `setLineItemAdjustments` (a direct module method, not a workflow)." The `insideHook` flag skips that path; promotion removal is deferred to the route override (`evaluateAutoApplyPromotions` for auto-apply) or the `cart.updated` subscriber (Pass 2 for code-applied).
 
 ### Routes overridden
 
