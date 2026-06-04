@@ -39,6 +39,7 @@ export async function computeNonStandardAdjustments(
     fields: [
       "id",
       "code",
+      "is_tax_inclusive",
       "application_method.type",
       "application_method.value",
       "application_method.max_quantity",
@@ -139,10 +140,11 @@ export async function computeNonStandardAdjustments(
           cart_id: cartId,
           item_id: adj.item_id,
           amount: adj.amount,
-          code: `${promotionMode.toUpperCase()}_${promo.code}`,
+          code: promo.code,
           source: promotionMode,
           promotion_id: (cfg as any).promotion_id,
           description: `${promotionMode === "bundle" ? "Bundle" : "Buy-get repeat"} promotion: ${promo.code}`,
+          is_tax_inclusive: (promo as any).is_tax_inclusive ?? false,
         }))
       )
     } else if (isApplied) {
@@ -186,7 +188,7 @@ async function applyExtAdjustmentsToCart(
   const cartModule = container.resolve(Modules.CART)
   const fullCart = await cartModule.retrieveCart(cartId, { relations: ["items.adjustments", "items"] })
 
-  const preservedAdjustments: { id: string; item_id: string; code: string; amount: number; description?: string; promotion_id?: string; provider_id?: string }[] = []
+  const preservedAdjustments: { id: string; item_id: string; code: string; amount: number; is_tax_inclusive: boolean; description?: string; promotion_id?: string; provider_id?: string; metadata?: Record<string, unknown> }[] = []
   for (const item of (fullCart.items ?? [])) {
     for (const adj of ((item as any).adjustments ?? [])) {
       if (customModePromoIds.has(adj.promotion_id)) {
@@ -197,14 +199,16 @@ async function applyExtAdjustmentsToCart(
         item_id: (item as any).id,
         code: adj.code,
         amount: typeof adj.amount === "number" ? adj.amount : Number(adj.amount),
+        is_tax_inclusive: adj.is_tax_inclusive ?? false,
         description: adj.description ?? undefined,
         promotion_id: adj.promotion_id ?? undefined,
         provider_id: adj.provider_id ?? undefined,
+        metadata: adj.metadata ?? undefined,
       })
     }
   }
 
-  const customAdjustments: { item_id: string; code: string; amount: number; description?: string; promotion_id?: string; provider_id?: string }[] = []
+  const customAdjustments: { item_id: string; code: string; amount: number; is_tax_inclusive: boolean; description?: string; promotion_id?: string; provider_id?: string; metadata?: Record<string, unknown> }[] = []
 
   const itemSpecific = cartExtAdjustments.filter((adj: any) => adj.item_id)
   const deduped = deduplicateExtAdjustments(itemSpecific)
@@ -213,9 +217,11 @@ async function applyExtAdjustmentsToCart(
       item_id: (adj as any).item_id,
       code: (adj as any).code,
       amount: typeof (adj as any).amount === "number" ? (adj as any).amount : Number((adj as any).amount),
+      is_tax_inclusive: (adj as any).is_tax_inclusive ?? false,
       description: (adj as any).description ?? undefined,
       promotion_id: (adj as any).promotion_id ?? undefined,
       provider_id: (adj as any).provider_id ?? undefined,
+      metadata: (adj as any).metadata ?? undefined,
     })
   }
 
@@ -235,9 +241,11 @@ async function applyExtAdjustmentsToCart(
           item_id: s.item_id,
           code: (adj as any).code,
           amount: s.amount,
+          is_tax_inclusive: (adj as any).is_tax_inclusive ?? false,
           description: (adj as any).description ?? undefined,
           promotion_id: (adj as any).promotion_id ?? undefined,
           provider_id: (adj as any).provider_id ?? undefined,
+          metadata: (adj as any).metadata ?? undefined,
         })
       }
     }
