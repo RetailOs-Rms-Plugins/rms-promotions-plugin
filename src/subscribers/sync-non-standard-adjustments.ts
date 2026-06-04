@@ -26,6 +26,6 @@ refreshCartItemsWorkflow.hooks.beforeRefreshingPaymentCollection(
     const cartId = (input as any).cart_id
     if (!cartId) return
 
-    await computeNonStandardAdjustments(cartId, container)
+    await computeNonStandardAdjustments(cartId, container, { insideHook: true })
   }
 )
