@@ -1,5 +1,16 @@
 # @retailos-ai/rms-promotions-extension
 
+## 1.1.6
+
+### Patch Changes
+
+- 353abd5: ⏺ fix: prevent deadlock when removing cart items with non-standard promotions
+
+  computeNonStandardAdjustments called updateCartPromotionsWorkflow.run() from inside
+  a workflow hook when no eligible items remained, deadlocking on the cart lock.
+  Added insideHook flag to skip that path — promotion removal is deferred to the
+  route override (auto-apply) or cart.updated subscriber (code-applied).
+
 ## 1.1.5
 
 ### Patch Changes
