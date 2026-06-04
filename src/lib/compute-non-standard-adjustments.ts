@@ -140,7 +140,7 @@ export async function computeNonStandardAdjustments(
           cart_id: cartId,
           item_id: adj.item_id,
           amount: adj.amount,
-          code: `${promotionMode.toUpperCase()}_${promo.code}`,
+          code: promo.code,
           source: promotionMode,
           promotion_id: (cfg as any).promotion_id,
           description: `${promotionMode === "bundle" ? "Bundle" : "Buy-get repeat"} promotion: ${promo.code}`,

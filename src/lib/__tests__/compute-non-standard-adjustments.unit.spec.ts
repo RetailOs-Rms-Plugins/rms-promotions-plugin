@@ -131,7 +131,7 @@ describe("computeNonStandardAdjustments", () => {
 
     expect(createdExtAdjs).toHaveLength(1)
     const adjs = createdExtAdjs[0]
-    expect(adjs[0].code).toBe("BUNDLE_BUNDLE10")
+    expect(adjs[0].code).toBe("BUNDLE10")
     expect(adjs[0].source).toBe("bundle")
     expect(adjs[0].promotion_id).toBe("promo_1")
     const totalAmount = adjs.reduce((sum: number, a: any) => sum + a.amount, 0)
@@ -153,7 +153,7 @@ describe("computeNonStandardAdjustments", () => {
 
     expect(createdExtAdjs).toHaveLength(1)
     const adjs = createdExtAdjs[0]
-    expect(adjs[0].code).toBe("BUYGET_REPEAT_BG_FREE")
+    expect(adjs[0].code).toBe("BG_FREE")
     expect(adjs[0].source).toBe("buyget_repeat")
     const totalAmount = adjs.reduce((sum: number, a: any) => sum + a.amount, 0)
     expect(totalAmount).toBe(3000)
@@ -166,7 +166,7 @@ describe("computeNonStandardAdjustments", () => {
       configs: [{ promotion_id: "promo_1", promotion_mode: "bundle", mode_config: { bundle_size: 3, remainder: "full_price" } }],
       promotions: [{ id: "promo_1", code: "BUNDLE10", application_method: { type: "fixed", value: 5000, max_quantity: null, target_rules: [] } }],
       cartItems: [{ id: "item_1", unit_price: 2000, quantity: 3, product_id: "prod_1", product: {} }],
-      cartExtAdjustments: [{ id: "ext_1", cart_id: "cart_1", item_id: "item_1", code: "BUNDLE_BUNDLE10", amount: 1000, promotion_id: "promo_1", source: "bundle" }],
+      cartExtAdjustments: [{ id: "ext_1", cart_id: "cart_1", item_id: "item_1", code: "BUNDLE10", amount: 1000, promotion_id: "promo_1", source: "bundle" }],
       fullCartItems: [{ id: "item_1", adjustments: [nativeAdj] }],
     })
 
@@ -177,7 +177,7 @@ describe("computeNonStandardAdjustments", () => {
     expect(setLineItemAdjustmentsCalls).toHaveLength(1)
     const finalAdjs = setLineItemAdjustmentsCalls[0]
     const nativeCodes = finalAdjs.filter((a: any) => a.code === "STANDARD10")
-    const customCodes = finalAdjs.filter((a: any) => a.code === "BUNDLE_BUNDLE10")
+    const customCodes = finalAdjs.filter((a: any) => a.code === "BUNDLE10")
     expect(nativeCodes).toHaveLength(1)
     expect(customCodes).toHaveLength(1)
   })
@@ -219,10 +219,10 @@ describe("computeNonStandardAdjustments", () => {
 
   it("deduplicates ext adjustments from concurrent invocations", async () => {
     const duplicateExtAdjs = [
-      { id: "ext_1", cart_id: "cart_1", item_id: "item_1", code: "BUNDLE_BUNDLE10", amount: 1000, promotion_id: "promo_1", source: "bundle" },
-      { id: "ext_2", cart_id: "cart_1", item_id: "item_1", code: "BUNDLE_BUNDLE10", amount: 1000, promotion_id: "promo_1", source: "bundle" },
-      { id: "ext_3", cart_id: "cart_1", item_id: "item_1", code: "BUNDLE_BUNDLE10", amount: 1000, promotion_id: "promo_1", source: "bundle" },
-      { id: "ext_4", cart_id: "cart_1", item_id: "item_1", code: "BUNDLE_BUNDLE10", amount: 1000, promotion_id: "promo_1", source: "bundle" },
+      { id: "ext_1", cart_id: "cart_1", item_id: "item_1", code: "BUNDLE10", amount: 1000, promotion_id: "promo_1", source: "bundle" },
+      { id: "ext_2", cart_id: "cart_1", item_id: "item_1", code: "BUNDLE10", amount: 1000, promotion_id: "promo_1", source: "bundle" },
+      { id: "ext_3", cart_id: "cart_1", item_id: "item_1", code: "BUNDLE10", amount: 1000, promotion_id: "promo_1", source: "bundle" },
+      { id: "ext_4", cart_id: "cart_1", item_id: "item_1", code: "BUNDLE10", amount: 1000, promotion_id: "promo_1", source: "bundle" },
     ]
 
     const { container, setLineItemAdjustmentsCalls } = createMockContainer({
@@ -239,15 +239,15 @@ describe("computeNonStandardAdjustments", () => {
 
     expect(setLineItemAdjustmentsCalls).toHaveLength(1)
     const finalAdjs = setLineItemAdjustmentsCalls[0]
-    const bundleAdjs = finalAdjs.filter((a: any) => a.code === "BUNDLE_BUNDLE10")
+    const bundleAdjs = finalAdjs.filter((a: any) => a.code === "BUNDLE10")
     expect(bundleAdjs).toHaveLength(1)
     expect(bundleAdjs[0].amount).toBe(1000)
   })
 
   it("dedup preserves manual adjustments with null promotion_id", async () => {
     const mixedExtAdjs = [
-      { id: "ext_1", cart_id: "cart_1", item_id: "item_1", code: "BUNDLE_BUNDLE10", amount: 1000, promotion_id: "promo_1", source: "bundle" },
-      { id: "ext_dup", cart_id: "cart_1", item_id: "item_1", code: "BUNDLE_BUNDLE10", amount: 1000, promotion_id: "promo_1", source: "bundle" },
+      { id: "ext_1", cart_id: "cart_1", item_id: "item_1", code: "BUNDLE10", amount: 1000, promotion_id: "promo_1", source: "bundle" },
+      { id: "ext_dup", cart_id: "cart_1", item_id: "item_1", code: "BUNDLE10", amount: 1000, promotion_id: "promo_1", source: "bundle" },
       { id: "ext_m1", cart_id: "cart_1", item_id: "item_1", code: "MANUAL_abc", amount: 500, promotion_id: null, source: "manual" },
       { id: "ext_m2", cart_id: "cart_1", item_id: "item_1", code: "MANUAL_def", amount: 300, promotion_id: null, source: "manual" },
     ]
@@ -266,7 +266,7 @@ describe("computeNonStandardAdjustments", () => {
 
     expect(setLineItemAdjustmentsCalls).toHaveLength(1)
     const finalAdjs = setLineItemAdjustmentsCalls[0]
-    const bundleAdjs = finalAdjs.filter((a: any) => a.code === "BUNDLE_BUNDLE10")
+    const bundleAdjs = finalAdjs.filter((a: any) => a.code === "BUNDLE10")
     const manualAdjs = finalAdjs.filter((a: any) => a.code?.startsWith("MANUAL_"))
     expect(bundleAdjs).toHaveLength(1)
     expect(manualAdjs).toHaveLength(2)
