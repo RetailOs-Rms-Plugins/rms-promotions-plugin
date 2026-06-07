@@ -40,7 +40,26 @@ export interface AutoApplyResult {
   removed: string[]
 }
 
-export async function evaluateAutoApplyPromotions(
+const autoApplyLocks = new Map<string, Promise<AutoApplyResult>>()
+
+function withAutoApplyLock(cartId: string, fn: () => Promise<AutoApplyResult>): Promise<AutoApplyResult> {
+  const noop: AutoApplyResult = { added: [], removed: [] }
+  const chain = (autoApplyLocks.get(cartId) ?? Promise.resolve(noop)).then(fn, fn)
+  autoApplyLocks.set(cartId, chain)
+  chain.finally(() => {
+    if (autoApplyLocks.get(cartId) === chain) autoApplyLocks.delete(cartId)
+  })
+  return chain
+}
+
+export function evaluateAutoApplyPromotions(
+  cartId: string,
+  container: any
+): Promise<AutoApplyResult> {
+  return withAutoApplyLock(cartId, () => evaluateAutoApplyPromotionsInner(cartId, container))
+}
+
+async function evaluateAutoApplyPromotionsInner(
   cartId: string,
   container: any
 ): Promise<AutoApplyResult> {
