@@ -74,3 +74,21 @@ The real discount computation lives entirely in the plugin's `adjustment-calcula
 - **Brief 1-cent adjustments in the async window.** Between cart mutation and subscriber execution, each eligible item shows a 1-cent discount. This is the same async window already accepted for Layer 2 — Layer 3 (checkout gate) ensures no order is placed with these placeholder amounts.
 - **`type: "standard"` is used even for buy-get semantics.** Medusa's `type: "buyget"` is never used by this plugin. This may confuse developers who expect buy-get behavior to use Medusa's native type. Document clearly.
 - **Target rules are evaluated by the plugin, not by Medusa's output.** Since `value: 1` produces trivial adjustments, the plugin cannot rely on Medusa's `computeActions` output to determine which items are eligible. The plugin maintains its own target rule evaluator that supports all 5 native Medusa attributes (`product`, `product_collection`, `product_category`, `product_type`, `product_tag`). When new target rule attributes are added (e.g., `brand_id`, `manufacturer_id` from ADR-0003), the target rule evaluator must be updated to support them.
+
+---
+
+## Limitations Discovered
+
+### Budget contamination (see ADR-0009)
+
+Medusa's `computeActions` uses a shared `appliedPromotionsMap` across all promotions in a single computation pass. Even with `value: 1`, each non-standard promotion consumes 1 unit of budget per eligible item. This can cause standard promotions computed later in the pass (sorted by `value` descending) to see a reduced or zero remaining budget, producing fewer adjustments than expected.
+
+When a standard promotion produces zero adjustments, `computedPromotionCodes` excludes it, and `updateCartPromotionsStep(REPLACE)` removes it from the cart entirely. This is the root cause of the bug where auto-apply standard promotions (e.g., "10% off everything") are not applied when a non-standard promotion (e.g., a bundle) is also active.
+
+The problem is worse when merchants set the native value to the actual bundle price (e.g., 25) instead of the prescribed `value: 1` — in that case, every item's entire budget is consumed and no standard promotion can produce adjustments.
+
+ADR-0009 introduces a defense-in-depth fix: after non-standard adjustments are computed, the plugin detects evicted standard promotions and restores them with independently computed adjustments.
+
+### Enforcement gap
+
+The admin UI does not currently enforce `value: 1` programmatically — merchants must set it manually. Until the UI auto-sets the value when `promotion_mode` is not `"standard"`, merchants may inadvertently use the actual discount value, amplifying the budget contamination problem.

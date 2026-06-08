@@ -5,6 +5,7 @@ import type PromotionExtModuleService from "../modules/promotion-ext/service"
 import { spreadCartAdjustment } from "./adjustment-spread"
 import { computeBundle, computeBuyGetRepeat } from "./adjustment-calculator"
 import { filterEligibleItems, type CartItemForTargetRules } from "./target-rule-evaluator"
+import { restoreEvictedStandardPromos } from "./restore-evicted-standard-promos"
 
 const applyLocks = new Map<string, Promise<void>>()
 
@@ -251,7 +252,9 @@ async function applyExtAdjustmentsToCart(
     }
   }
 
-  const finalAdjustments = [...preservedAdjustments, ...customAdjustments]
+  const restoredAdjustments = await restoreEvictedStandardPromos(cartId, customModePromoIds, container)
+
+  const finalAdjustments = [...preservedAdjustments, ...customAdjustments, ...restoredAdjustments]
   await cartModule.setLineItemAdjustments(cartId, finalAdjustments)
 }
 
