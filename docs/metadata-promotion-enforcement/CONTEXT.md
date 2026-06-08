@@ -89,6 +89,8 @@ For non-standard promotion modes, Medusa's native `application_method` fields ta
 
 The plugin's adjustment calculator reads these fields from the promotion's `application_method`, not from `mode_config`. Medusa's own `computeActions` still runs and produces adjustments from these fields, but the subscriber strips all Medusa-generated adjustments for non-standard promotions (matched by `promotion_id`) and replaces them with the plugin's computed adjustments.
 
+**Budget contamination caveat:** Medusa's `computeActions` uses a shared budget map (`appliedPromotionsMap`) across all promotions. Non-standard promotions' native values consume budget that reduces what's available for standard promotions computed later in the same pass (sorted by value descending). This can cause standard auto-apply promotions to produce zero adjustments and be removed from the cart. ADR-0004 mitigates this by prescribing `value: 1`; ADR-0009 provides defense-in-depth by restoring evicted standard promotions after non-standard adjustments are computed.
+
 **Semantic note on `max_quantity` for buy-get repeat:** In Medusa's native interpretation, `max_quantity` counts the items that *receive* the discount (the "get" items). In this plugin's buy-get repeat mode, `max_quantity` counts the "buy" items instead — the full-price side of the deal. This is a deliberate business decision. A merchant setting `max_quantity = 6` on a "buy 3 get 2" promotion gets `floor(6/3) = 2` cycles, meaning 4 items discounted — not 6. Future developers should be aware of this difference when comparing the plugin's behavior to Medusa's native buyget documentation.
 
 ### Mode Config
@@ -126,6 +128,8 @@ For non-standard promotion modes, Medusa's `computeActions` still runs and produ
 
 ### Adjustment Conflict Resolution
 When multiple bundle/buy-get promotions target the same cart items, their adjustments **stack** (all apply). This is consistent with Medusa's native behavior for standard promotions. The architecture supports future conflict resolution strategies (e.g., best-deal-wins) because the adjustment calculator returns adjustments grouped by promotion before they are combined into a single `addLineItemAdjustments` call.
+
+**Known gap — no cross-boundary budget cap.** Medusa's native `computeActions` caps total adjustments per item at the item's subtotal, but only among promotions computed in the same pass. The plugin computes non-standard adjustments independently and restored standard adjustments with a fresh budget (see ADR-0009). These three adjustment sources (preserved native, custom non-standard, restored standard) are merged without a final per-item cap. In theory, the combined total discount on an item could exceed the item's price. In practice this is unlikely with typical promotion setups, but it is a gap. The fix is to clamp total adjustments per item at the item's subtotal inside `applyExtAdjustmentsToCart` before calling `setLineItemAdjustments`.
 
 ---
 
