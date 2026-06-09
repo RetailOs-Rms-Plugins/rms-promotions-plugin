@@ -157,3 +157,65 @@ export function computeBuyGetRepeat(
 
   return { promotion_id: promotionId, adjustments }
 }
+
+export function resolveExclusiveNonStandard(
+  groups: PromotionAdjustmentGroup[]
+): PromotionAdjustmentGroup[] {
+  const withAdjustments = groups.filter((g) => g.adjustments.length > 0)
+  const sorted = [...withAdjustments].sort((a, b) => {
+    const savingsA = a.adjustments.reduce((sum, adj) => sum + adj.amount, 0)
+    const savingsB = b.adjustments.reduce((sum, adj) => sum + adj.amount, 0)
+    return savingsB - savingsA
+  })
+
+  const claimedItems = new Set<string>()
+  const winners: PromotionAdjustmentGroup[] = []
+
+  for (const group of sorted) {
+    const itemIds = group.adjustments.map((a) => a.item_id)
+    if (itemIds.some((id) => claimedItems.has(id))) continue
+
+    winners.push(group)
+    for (const id of itemIds) {
+      claimedItems.add(id)
+    }
+  }
+
+  return winners
+}
+
+export function capAdjustmentsToSubtotal(
+  itemSubtotals: Map<string, number>,
+  priorityAdjustments: { item_id: string; amount: number }[],
+  otherAdjustments: { item_id: string; amount: number; [key: string]: any }[]
+): { item_id: string; amount: number; [key: string]: any }[] {
+  const priorityByItem = new Map<string, number>()
+  for (const adj of priorityAdjustments) {
+    priorityByItem.set(adj.item_id, (priorityByItem.get(adj.item_id) ?? 0) + adj.amount)
+  }
+
+  const otherByItem = new Map<string, number>()
+  for (const adj of otherAdjustments) {
+    otherByItem.set(adj.item_id, (otherByItem.get(adj.item_id) ?? 0) + adj.amount)
+  }
+
+  const scaleByItem = new Map<string, number>()
+  for (const [itemId, subtotal] of itemSubtotals) {
+    const priorityTotal = priorityByItem.get(itemId) ?? 0
+    const otherTotal = otherByItem.get(itemId) ?? 0
+    const remaining = subtotal - priorityTotal
+    if (remaining <= 0) {
+      scaleByItem.set(itemId, 0)
+    } else if (otherTotal > remaining) {
+      scaleByItem.set(itemId, remaining / otherTotal)
+    }
+  }
+
+  const capped = otherAdjustments.map((adj) => {
+    const scale = scaleByItem.get(adj.item_id)
+    if (scale === undefined) return adj
+    return { ...adj, amount: Math.floor(adj.amount * scale) }
+  })
+
+  return [...priorityAdjustments, ...capped]
+}
