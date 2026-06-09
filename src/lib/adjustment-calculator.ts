@@ -64,28 +64,28 @@ export function computeBundle(
     return { promotion_id: promotionId, adjustments: [] }
   }
 
-  const bundledCount = completeBundles * config.bundle_size
-  const originalTotal = expandedItems.slice(0, bundledCount).reduce((sum, i) => sum + i.unit_price, 0)
-  const bundleTotal = completeBundles * bundlePrice
-  const totalSavings = originalTotal - bundleTotal
-
-  if (totalSavings <= 0) {
-    return { promotion_id: promotionId, adjustments: [] }
-  }
-
   const adjustmentsByItem = new Map<string, number>()
-  let distributed = 0
 
-  const bundledItems = expandedItems.slice(0, bundledCount)
-  for (let i = 0; i < bundledItems.length; i++) {
-    const item = bundledItems[i]
-    const isLast = i === bundledItems.length - 1
-    const share = isLast
-      ? totalSavings - distributed
-      : Math.floor(totalSavings * (item.unit_price / originalTotal))
+  for (let b = 0; b < completeBundles; b++) {
+    const groupStart = b * config.bundle_size
+    const groupItems = expandedItems.slice(groupStart, groupStart + config.bundle_size)
 
-    adjustmentsByItem.set(item.item_id, (adjustmentsByItem.get(item.item_id) ?? 0) + share)
-    distributed += share
+    const groupOriginal = groupItems.reduce((sum, i) => sum + i.unit_price, 0)
+    const groupSavings = groupOriginal - bundlePrice
+
+    if (groupSavings <= 0) continue
+
+    let distributed = 0
+    for (let i = 0; i < groupItems.length; i++) {
+      const item = groupItems[i]
+      const isLast = i === groupItems.length - 1
+      const share = isLast
+        ? groupSavings - distributed
+        : Math.floor(groupSavings * (item.unit_price / groupOriginal))
+
+      adjustmentsByItem.set(item.item_id, (adjustmentsByItem.get(item.item_id) ?? 0) + share)
+      distributed += share
+    }
   }
 
   const adjustments: AdjustmentResult[] = []

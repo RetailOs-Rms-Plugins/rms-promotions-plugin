@@ -22,7 +22,7 @@ const COMBINATORS = ["and", "or"] as const
 const PROMOTION_MODES = ["standard", "bundle", "buyget_repeat"] as const
 
 const BundleModeConfigSchema = z.object({
-  bundle_size: z.number().int().min(2),
+  bundle_size: z.number().int().min(1),
   bundle_price: z.number().min(0).optional(),
   remainder: z.literal("full_price"),
 })

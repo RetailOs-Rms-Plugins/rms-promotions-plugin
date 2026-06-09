@@ -120,6 +120,58 @@ describe("computeBundle", () => {
     // 3 bundles: original 18000, cost 15000, savings 3000
     expect(totalAdjustment).toBe(3000)
   })
+
+  it("bundle_size=1 sets target price per individual item", () => {
+    const singleConfig: BundleModeConfig = { bundle_size: 1, remainder: "full_price" }
+    const items = makeItems([
+      { id: "item_a", unit_price: 6000, quantity: 1 },
+      { id: "item_b", unit_price: 7200, quantity: 1 },
+      { id: "item_c", unit_price: 5500, quantity: 1 },
+      { id: "item_d", unit_price: 13000, quantity: 1 },
+    ])
+    // target price 4990 per item
+    // item_a: 6000 - 4990 = 1010
+    // item_b: 7200 - 4990 = 2210
+    // item_c: 5500 - 4990 = 510
+    // item_d: 13000 - 4990 = 8010
+    // total savings = 11740
+    const result = computeBundle("promo_1", items, singleConfig, { value: 4990 })
+    const totalAdjustment = result.adjustments.reduce((sum, a) => sum + a.amount, 0)
+    expect(totalAdjustment).toBe(11740)
+    expect(result.adjustments).toHaveLength(4)
+    const byItem = new Map(result.adjustments.map((a) => [a.item_id, a.amount]))
+    expect(byItem.get("item_a")).toBe(1010)
+    expect(byItem.get("item_b")).toBe(2210)
+    expect(byItem.get("item_c")).toBe(510)
+    expect(byItem.get("item_d")).toBe(8010)
+  })
+
+  it("each bundle group distributes savings independently", () => {
+    // bundle_size=2, two groups with different price mixes
+    const items = makeItems([
+      { id: "item_expensive", unit_price: 5000, quantity: 2 },
+      { id: "item_cheap", unit_price: 1000, quantity: 2 },
+    ])
+    // expanded: [expensive, expensive, cheap, cheap]
+    // group 1: expensive(5000) + expensive(5000) = 10000, bundle=3000, savings=7000
+    //   each gets floor(7000 * 5000/10000) = 3500
+    // group 2: cheap(1000) + cheap(1000) = 2000, bundle=3000, savings=-1000 → no savings
+    // only group 1 should produce adjustments
+    const result = computeBundle("promo_1", items, { bundle_size: 2, remainder: "full_price" }, { value: 3000 })
+    const byItem = new Map(result.adjustments.map((a) => [a.item_id, a.amount]))
+    expect(byItem.get("item_expensive")).toBe(7000)
+    expect(byItem.has("item_cheap")).toBe(false)
+  })
+
+  it("bundle_size=1 skips items cheaper than target price", () => {
+    const singleConfig: BundleModeConfig = { bundle_size: 1, remainder: "full_price" }
+    const items = makeItems([
+      { id: "item_cheap", unit_price: 1000, quantity: 1 },
+    ])
+    // target price 4990 > item price 1000 → no savings
+    const result = computeBundle("promo_1", items, singleConfig, { value: 4990 })
+    expect(result.adjustments).toHaveLength(0)
+  })
 })
 
 // ─── computeBuyGetRepeat ────────────────────────────────────────────────────
