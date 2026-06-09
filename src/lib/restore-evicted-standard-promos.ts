@@ -116,14 +116,6 @@ export async function restoreEvictedStandardPromos(
 
   if (!evictedPromos.length) return []
 
-  const remoteLink = container.resolve(ContainerRegistrationKeys.LINK)
-  await remoteLink.create(
-    evictedPromos.map((p) => ({
-      [Modules.CART]: { cart_id: cartId },
-      [Modules.PROMOTION]: { promotion_id: p.id },
-    }))
-  )
-
   const promotionService = container.resolve(Modules.PROMOTION)
 
   const { data: freshCart } = await query.graph({
@@ -185,8 +177,29 @@ export async function restoreEvictedStandardPromos(
     prevent_auto_promotions: true,
   })
 
-  const promoCodeToId = new Map(evictedPromos.map((p) => [p.code, p.id]))
-  const promoCodeToTaxInclusive = new Map(evictedPromos.map((p) => [p.code, p.is_tax_inclusive]))
+  const codesWithAdjustments = new Set<string>()
+  for (const action of actions) {
+    if ((action as any).action === "addItemAdjustment") {
+      codesWithAdjustments.add((action as any).code)
+    }
+  }
+
+  const promosWithAdjustments = evictedPromos.filter((p) =>
+    codesWithAdjustments.has(p.code)
+  )
+
+  if (!promosWithAdjustments.length) return []
+
+  const remoteLink = container.resolve(ContainerRegistrationKeys.LINK)
+  await remoteLink.create(
+    promosWithAdjustments.map((p) => ({
+      [Modules.CART]: { cart_id: cartId },
+      [Modules.PROMOTION]: { promotion_id: p.id },
+    }))
+  )
+
+  const promoCodeToId = new Map(promosWithAdjustments.map((p) => [p.code, p.id]))
+  const promoCodeToTaxInclusive = new Map(promosWithAdjustments.map((p) => [p.code, p.is_tax_inclusive]))
 
   const restoredAdjustments: RestoredAdjustment[] = []
   for (const action of actions) {
