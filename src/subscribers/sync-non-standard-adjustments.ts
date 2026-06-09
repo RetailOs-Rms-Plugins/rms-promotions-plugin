@@ -3,22 +3,18 @@
  *
  * This hook runs inside refreshCartItemsWorkflow.beforeRefreshingPaymentCollection,
  * which fires AFTER updateCartPromotionsWorkflow applies native adjustments but
- * BEFORE the route handler calls refetchCart(). It computes non-standard
- * adjustments (bundle, buyget_repeat) for promotions already on the cart.
+ * BEFORE the route handler calls refetchCart(). It is the single invocation
+ * point for all plugin promotion logic:
  *
- * ## What this hook does NOT do
+ * 1. Evaluate auto-apply promotions (add/remove via direct link manipulation)
+ * 2. Compute non-standard adjustments (bundle, buyget_repeat)
  *
- * It does NOT evaluate auto-apply promotions. Auto-apply requires calling
- * updateCartPromotionsWorkflow to add/remove promos, which would deadlock
- * inside a hook — hooks call .run() (standalone invocation) not .runAsStep()
- * (sub-workflow), so the lock is NOT skipped. See ADR-0002 for details.
- *
- * Auto-apply evaluation happens in the custom store route overrides
- * (src/api/store/carts/[id]/line-items/) which run it AFTER the main
- * workflow completes and the lock is released.
+ * All logic runs inside the workflow's distributed lock — no concurrent
+ * writers, no interleaving, no race conditions.
  */
 
 import { refreshCartItemsWorkflow } from "@medusajs/medusa/core-flows"
+import { evaluateAutoApplyPromotions } from "../lib/evaluate-auto-apply-promotions"
 import { computeNonStandardAdjustments } from "../lib/compute-non-standard-adjustments"
 
 refreshCartItemsWorkflow.hooks.beforeRefreshingPaymentCollection(
@@ -26,6 +22,7 @@ refreshCartItemsWorkflow.hooks.beforeRefreshingPaymentCollection(
     const cartId = (input as any).cart_id
     if (!cartId) return
 
-    await computeNonStandardAdjustments(cartId, container, { insideHook: true })
+    await evaluateAutoApplyPromotions(cartId, container)
+    await computeNonStandardAdjustments(cartId, container)
   }
 )

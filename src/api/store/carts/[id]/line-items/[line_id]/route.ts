@@ -1,16 +1,13 @@
 /**
  * Override for POST/DELETE /store/carts/:id/line-items/:line_id.
  *
- * Same pattern as the add-item route: run the workflow, then evaluate
- * auto-apply promotions and compute non-standard adjustments AFTER
- * the lock is released.
+ * Promotion logic runs inside the beforeRefreshingPaymentCollection hook,
+ * within the workflow's distributed lock. Routes just run workflows and return.
  */
 
 import type { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { updateLineItemInCartWorkflowId, deleteLineItemsWorkflowId } from "@medusajs/core-flows"
 import { Modules } from "@medusajs/framework/utils"
-import { evaluateAutoApplyPromotions } from "../../../../../../lib/evaluate-auto-apply-promotions"
-import { computeNonStandardAdjustments } from "../../../../../../lib/compute-non-standard-adjustments"
 import { refetchCart } from "../../../helpers"
 
 export const POST = async (req: MedusaRequest, res: MedusaResponse) => {
@@ -24,9 +21,6 @@ export const POST = async (req: MedusaRequest, res: MedusaResponse) => {
       additional_data: (req.validatedBody as any).additional_data,
     },
   })
-
-  await evaluateAutoApplyPromotions(req.params.id, req.scope)
-  await computeNonStandardAdjustments(req.params.id, req.scope)
 
   const cart = await refetchCart(req.params.id, req.scope, (req as any).queryConfig.fields)
   res.status(200).json({ cart })
@@ -42,9 +36,6 @@ export const DELETE = async (req: MedusaRequest, res: MedusaResponse) => {
       ids: [id],
     },
   })
-
-  await evaluateAutoApplyPromotions(req.params.id, req.scope)
-  await computeNonStandardAdjustments(req.params.id, req.scope)
 
   const cart = await refetchCart(req.params.id, req.scope, (req as any).queryConfig.fields)
   res.status(200).json({

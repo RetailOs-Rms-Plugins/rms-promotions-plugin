@@ -1,6 +1,5 @@
 import type { SubscriberArgs, SubscriberConfig } from "@medusajs/framework"
-import { updateCartPromotionsWorkflow } from "@medusajs/medusa/core-flows"
-import { ContainerRegistrationKeys, PromotionActions } from "@medusajs/framework/utils"
+import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils"
 import { PROMOTION_EXT_MODULE } from "../modules/promotion-ext"
 import type PromotionExtModuleService from "../modules/promotion-ext/service"
 import { evaluatePromotion } from "../lib/rule-evaluator"
@@ -8,22 +7,20 @@ import { buildEnrichedCart, loadConfigShape, passesNativeRules } from "../lib/ca
 import { evaluateAutoApplyPromotions } from "../lib/evaluate-auto-apply-promotions"
 import { computeNonStandardAdjustments } from "../lib/compute-non-standard-adjustments"
 
-// Layer 2 — Auto-Apply Engine + Code-Applied Re-evaluation
-//
-// This subscriber is the async fallback for promotion evaluation. The primary
-// synchronous path is the custom store route overrides (src/api/store/carts/).
-// This subscriber covers cart mutation paths not covered by route overrides.
+// Async fallback for promotion evaluation. The primary synchronous path is
+// the beforeRefreshingPaymentCollection hook (src/subscribers/sync-non-standard-adjustments.ts).
+// This subscriber covers cart mutation paths not covered by route overrides
+// (e.g., shipping method changes, customer assignment, admin operations).
 export default async function cartUpdatedHandler({
   event: { data },
   container,
 }: SubscriberArgs<{ id: string }>) {
   const cartId = data.id
-  const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
 
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
   const service: PromotionExtModuleService = container.resolve(PROMOTION_EXT_MODULE)
 
-  // ── Pass 1: Auto-apply evaluation (shared with route overrides) ──
+  // ── Pass 1: Auto-apply evaluation (uses direct links, safe everywhere) ──
   const { added: actualToAdd, removed: actualToRemove } =
     await evaluateAutoApplyPromotions(cartId, container)
 
@@ -63,7 +60,7 @@ export default async function cartUpdatedHandler({
     return appliedPromoIds.has(c.promotion_id)
   })
 
-  const codeAppliedToRemove: string[] = []
+  const codeAppliedToRemove: { id: string; code: string }[] = []
 
   if (codeAppliedToReEvaluate.length) {
     const promoIds = codeAppliedToReEvaluate.map((c) => c.promotion_id)
@@ -96,7 +93,7 @@ export default async function cartUpdatedHandler({
         passesNativeRules(promotion, cart)
 
       if (!isActive) {
-        codeAppliedToRemove.push(promotion.code)
+        codeAppliedToRemove.push({ id: promotion.id, code: promotion.code })
         continue
       }
 
@@ -104,20 +101,27 @@ export default async function cartUpdatedHandler({
       const passes = evaluatePromotion(configShape, enrichedCart)
 
       if (!passes) {
-        codeAppliedToRemove.push(promotion.code)
+        codeAppliedToRemove.push({ id: promotion.id, code: promotion.code })
       }
     }
 
     if (codeAppliedToRemove.length) {
-      await updateCartPromotionsWorkflow(container).run({
-        input: { cart_id: cartId, promo_codes: codeAppliedToRemove, action: PromotionActions.REMOVE },
-      })
+      const remoteLink = container.resolve(ContainerRegistrationKeys.LINK)
+      await remoteLink.dismiss(
+        codeAppliedToRemove.map((p) => ({
+          [Modules.CART]: { cart_id: cartId },
+          [Modules.PROMOTION]: { promotion_id: p.id },
+        }))
+      )
     }
   }
 
   // ── Compute non-standard adjustments with final applied codes ──
-  const allRemoved = [...actualToRemove, ...codeAppliedToRemove]
-  const appliedPromotionCodes = [...appliedCodes, ...actualToAdd].filter((c) => !allRemoved.includes(c))
+  const removedCodes = new Set([
+    ...actualToRemove,
+    ...codeAppliedToRemove.map((p) => p.code),
+  ])
+  const appliedPromotionCodes = [...appliedCodes, ...actualToAdd].filter((c) => !removedCodes.has(c))
 
   await computeNonStandardAdjustments(cartId, container, {
     appliedPromotionCodes,

@@ -1,5 +1,4 @@
-import { ContainerRegistrationKeys, Modules, PromotionActions } from "@medusajs/framework/utils"
-import { updateCartPromotionsWorkflow } from "@medusajs/medusa/core-flows"
+import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils"
 import { PROMOTION_EXT_MODULE } from "../modules/promotion-ext"
 import type PromotionExtModuleService from "../modules/promotion-ext/service"
 import { spreadCartAdjustment } from "./adjustment-spread"
@@ -7,21 +6,10 @@ import { computeBundle, computeBuyGetRepeat } from "./adjustment-calculator"
 import { filterEligibleItems, type CartItemForTargetRules } from "./target-rule-evaluator"
 import { restoreEvictedStandardPromos } from "./restore-evicted-standard-promos"
 
-const applyLocks = new Map<string, Promise<void>>()
-
-function withApplyLock(cartId: string, fn: () => Promise<void>): Promise<void> {
-  const chain = (applyLocks.get(cartId) ?? Promise.resolve()).then(fn, fn)
-  applyLocks.set(cartId, chain)
-  chain.finally(() => {
-    if (applyLocks.get(cartId) === chain) applyLocks.delete(cartId)
-  })
-  return chain
-}
-
 export async function computeNonStandardAdjustments(
   cartId: string,
   container: any,
-  options?: { appliedPromotionCodes?: string[]; insideHook?: boolean }
+  options?: { appliedPromotionCodes?: string[] }
 ): Promise<void> {
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
   const service: PromotionExtModuleService = container.resolve(PROMOTION_EXT_MODULE)
@@ -148,14 +136,16 @@ export async function computeNonStandardAdjustments(
           is_tax_inclusive: (promo as any).is_tax_inclusive ?? false,
         }))
       )
-    } else if (isApplied && !options?.insideHook) {
-      await updateCartPromotionsWorkflow(container).run({
-        input: { cart_id: cartId, promo_codes: [promo.code], action: PromotionActions.REMOVE },
+    } else if (isApplied) {
+      const remoteLink = container.resolve(ContainerRegistrationKeys.LINK)
+      await remoteLink.dismiss({
+        [Modules.CART]: { cart_id: cartId },
+        [Modules.PROMOTION]: { promotion_id: (cfg as any).promotion_id },
       })
     }
   }
 
-  await withApplyLock(cartId, () => applyExtAdjustmentsToCart(cartId, nonStandardConfigs, container))
+  await applyExtAdjustmentsToCart(cartId, nonStandardConfigs, container)
 }
 
 async function resolveAppliedCodes(
