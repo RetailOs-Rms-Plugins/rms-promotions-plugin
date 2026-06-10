@@ -189,32 +189,23 @@ export function capAdjustmentsToSubtotal(
   priorityAdjustments: { item_id: string; amount: number }[],
   otherAdjustments: { item_id: string; amount: number; [key: string]: any }[]
 ): { item_id: string; amount: number; [key: string]: any }[] {
-  const priorityByItem = new Map<string, number>()
-  for (const adj of priorityAdjustments) {
-    priorityByItem.set(adj.item_id, (priorityByItem.get(adj.item_id) ?? 0) + adj.amount)
-  }
-
-  const otherByItem = new Map<string, number>()
-  for (const adj of otherAdjustments) {
-    otherByItem.set(adj.item_id, (otherByItem.get(adj.item_id) ?? 0) + adj.amount)
-  }
-
-  const scaleByItem = new Map<string, number>()
+  const remainingByItem = new Map<string, number>()
   for (const [itemId, subtotal] of itemSubtotals) {
-    const priorityTotal = priorityByItem.get(itemId) ?? 0
-    const otherTotal = otherByItem.get(itemId) ?? 0
-    const remaining = subtotal - priorityTotal
-    if (remaining <= 0) {
-      scaleByItem.set(itemId, 0)
-    } else if (otherTotal > remaining) {
-      scaleByItem.set(itemId, remaining / otherTotal)
-    }
+    remainingByItem.set(itemId, subtotal)
   }
 
-  const capped = otherAdjustments.map((adj) => {
-    const scale = scaleByItem.get(adj.item_id)
-    if (scale === undefined) return adj
-    return { ...adj, amount: Math.floor(adj.amount * scale) }
+  for (const adj of priorityAdjustments) {
+    const remaining = remainingByItem.get(adj.item_id) ?? 0
+    remainingByItem.set(adj.item_id, remaining - adj.amount)
+  }
+
+  const sorted = [...otherAdjustments].sort((a, b) => b.amount - a.amount)
+
+  const capped = sorted.map((adj) => {
+    const remaining = Math.max(0, remainingByItem.get(adj.item_id) ?? 0)
+    const cappedAmount = Math.min(adj.amount, remaining)
+    remainingByItem.set(adj.item_id, remaining - cappedAmount)
+    return { ...adj, amount: cappedAmount }
   })
 
   return [...priorityAdjustments, ...capped]

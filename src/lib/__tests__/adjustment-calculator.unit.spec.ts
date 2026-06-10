@@ -420,15 +420,15 @@ describe("resolveExclusiveNonStandard", () => {
 // ─── capAdjustmentsToSubtotal ───────────────────────────────────────────────
 
 describe("capAdjustmentsToSubtotal", () => {
-  it("scales down non-priority adjustments when total exceeds item subtotal", () => {
+  it("caps non-priority adjustments sequentially when total exceeds item subtotal", () => {
     const itemSubtotals = new Map([["item_x", 5000]])
     const priorityAdjustments = [{ item_id: "item_x", amount: 3000 }]
     const otherAdjustments = [
       { item_id: "item_x", amount: 2000, code: "std_a" },
       { item_id: "item_x", amount: 2000, code: "std_b" },
     ]
-    // priority: 3000, others: 4000, total: 7000, budget remaining: 2000
-    // others scaled to fit: 2000 * (2000/4000) = 1000 each
+    // priority: 3000, remaining: 2000
+    // sorted: std_a(2000), std_b(2000) — same value, first gets full 2000, second gets 0
     const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, otherAdjustments)
     const totalForX = result.filter((a) => a.item_id === "item_x").reduce((s, a) => s + a.amount, 0)
     expect(totalForX).toBeLessThanOrEqual(5000)
@@ -476,5 +476,44 @@ describe("capAdjustmentsToSubtotal", () => {
     expect(totalForX).toBe(5000)
     // item_y: priority 1000, remaining 2000, other 1000 fits → no cap
     expect(totalForY).toBe(2000)
+  })
+
+  it("no rounding loss — sequential capping uses full remaining budget", () => {
+    const itemSubtotals = new Map([["item_x", 100]])
+    const priorityAdjustments: { item_id: string; amount: number }[] = []
+    const otherAdjustments = [
+      { item_id: "item_x", amount: 33, code: "std_a" },
+      { item_id: "item_x", amount: 33, code: "std_b" },
+      { item_id: "item_x", amount: 35, code: "std_c" },
+    ]
+    // total others: 101, exceeds subtotal 100
+    // sorted: std_c(35), std_a(33), std_b(33)
+    // std_c: min(35, 100) = 35, remaining = 65
+    // std_a: min(33, 65) = 33, remaining = 32
+    // std_b: min(33, 32) = 32, remaining = 0
+    // total = 35 + 33 + 32 = 100 — exact, no rounding loss
+    const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, otherAdjustments)
+    const totalForX = result.filter((a) => a.item_id === "item_x").reduce((s, a) => s + a.amount, 0)
+    expect(totalForX).toBe(100)
+  })
+
+  it("highest-value adjustment gets priority when budget is tight", () => {
+    const itemSubtotals = new Map([["item_x", 50]])
+    const priorityAdjustments = [{ item_id: "item_x", amount: 30 }]
+    const otherAdjustments = [
+      { item_id: "item_x", amount: 10, code: "std_small" },
+      { item_id: "item_x", amount: 25, code: "std_large" },
+    ]
+    // remaining after priority: 20
+    // sorted: std_large(25), std_small(10)
+    // std_large: min(25, 20) = 20, remaining = 0
+    // std_small: min(10, 0) = 0
+    const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, otherAdjustments)
+    const large = result.find((a) => (a as any).code === "std_large")
+    const small = result.find((a) => (a as any).code === "std_small")
+    expect(large?.amount).toBe(20)
+    expect(small?.amount).toBe(0)
+    const totalForX = result.filter((a) => a.item_id === "item_x").reduce((s, a) => s + a.amount, 0)
+    expect(totalForX).toBe(50)
   })
 })

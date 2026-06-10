@@ -507,6 +507,51 @@ All parameter additions are optional — backward compatible with existing call 
 
 ---
 
+### Entry 9: Rounding Loss in Budget Cap When Non-Standard + Standard Adjustments Combine
+
+**Type:** Bug
+**Severity:** Low–Medium — customer is undercharged by small amounts (typically 1–3 currency units per item)
+
+**Symptom:** When a non-standard promotion (bundle, buyget_repeat) and multiple standard promotions (fixed, percentage) apply to the same item and the combined standard discounts exceed the remaining budget after the non-standard discount, the cart total is slightly higher than it should be. The customer pays a small amount they shouldn't.
+
+Example: Item costs 100€. Bundle promo sets target price 70€ (30€ off). Three standard promotions: 35€ off, 33€ off, 33€ off. Expected: total discount = 100€, cart = 0€. Actual (before fix): total discount = 99€, cart = 1€.
+
+**Root cause:** `capAdjustmentsToSubtotal` in `adjustment-calculator.ts` used **proportional scaling** with `Math.floor` to fit standard adjustments into the remaining budget after non-standard adjustments. Each adjustment was independently scaled and floored, accumulating rounding losses.
+
+The three adjustment sources are computed independently:
+1. Non-standard adjustments (priority) — computed by the plugin from original prices
+2. Preserved native adjustments — computed by Medusa's `computeActions`, which doesn't know about #1
+3. Restored standard adjustments — computed by `restoreEvictedStandardPromos` in a clean context, also unaware of #1
+
+When #2 and #3 exceed the remaining budget after #1, `capAdjustmentsToSubtotal` must scale them down. The old algorithm: `scale = remaining / otherTotal`, then `Math.floor(adj.amount * scale)` for each adjustment. With the example above:
+
+- Remaining after bundle: 70€
+- Standard adjustments from Medusa: 35 + 33 + 32 = 100€ (Medusa capped the last one at 32 in its own pass)
+- Scale: 70/100 = 0.7
+- `floor(35 × 0.7)` = `floor(24.5)` = 24
+- `floor(33 × 0.7)` = `floor(23.1)` = 23
+- `floor(32 × 0.7)` = `floor(22.4)` = 22
+- Total: 24 + 23 + 22 = 69 instead of 70. Lost 1€.
+
+**Why this only happens with non-standard + standard combinations:** Medusa's native `computeActions` already does sequential capping for standard-only promotions (sort by value DESC, apply each capped at remaining). When only standard promotions are on the cart, Medusa handles them correctly — the plugin's `capAdjustmentsToSubtotal` is not triggered because the standard adjustments never exceed the item subtotal. The bug only manifests when non-standard adjustments consume part of the budget, making the independently-computed standard adjustments exceed the remaining budget.
+
+**Designed fix:** Replace proportional scaling with **sequential capping** — the same algorithm Medusa uses natively:
+
+1. Compute remaining budget per item: `subtotal - priorityTotal` (non-standard adjustments always applied in full).
+2. Sort other adjustments (preserved + restored) by amount DESC.
+3. For each adjustment: `cappedAmount = min(amount, remaining)`, then `remaining -= cappedAmount`.
+
+No `Math.floor`, no proportional scaling, no rounding loss. The highest-value adjustment gets applied first and in full (or capped at remaining). The last adjustment absorbs any budget shortfall — identical to Medusa's native behavior.
+
+With the fix applied to the example above:
+- Bundle: 30€, remaining = 70€
+- 35off: min(35, 70) = 35, remaining = 35
+- 33Offf: min(33, 35) = 33, remaining = 2
+- 33off2: min(32, 2) = 2, remaining = 0
+- Total: 30 + 35 + 33 + 2 = 100€. Cart = 0€. Exact.
+
+---
+
 ## User Stories
 
 1. As a customer, I want only the best promotion to apply to each item in my cart, so that my cart total never goes negative from stacked discounts.
@@ -520,6 +565,7 @@ All parameter additions are optional — backward compatible with existing call 
 9. As a developer, I want all promotion computation to happen inside the workflow's distributed lock, so that concurrent cart mutations cannot interleave and produce inconsistent state.
 10. As a developer, I want `restoreEvictedStandardPromos` to only link promotions that produce adjustments, so that phantom promotion links don't accumulate on carts.
 11. As a customer, I want standard auto-apply promotions to produce discounts immediately when my first item is added to the cart, not only after a second mutation.
+12. As a customer, I want the full discount applied when non-standard and standard promotions combine, without small amounts lost to rounding.
 
 ---
 
@@ -606,6 +652,7 @@ Existing test files follow the pattern of mocking the Medusa container (`contain
 3. **Entry 2** (move logic into hook) — architectural refactor that fixes the race condition, duplicate ID errors (Entry 4), and duplicate adjustments (Entry 6). Should be done before Entry 1 because it changes where the resolution logic runs.
 4. **Entry 1** (two-phase resolution) — builds on the Entry 2 refactor. The greedy algorithm and budget cap are implemented in the same code path that Entry 2 consolidates into the hook.
 5. **Entry 8** (freshly-linked standard promo adjustments) — fixes a regression introduced by Entry 2. Must be implemented after Entry 2.
+6. **Entry 9** (budget cap rounding fix) — replaces proportional scaling with sequential capping in `capAdjustmentsToSubtotal`. Must be implemented after Entry 1 (which introduced the function).
 
 ### Relationship between entries
 
@@ -619,6 +666,7 @@ Existing test files follow the pattern of mocking the Medusa container (`contain
 | 6 | Bug (Entry 1 + Entry 2) | Entry 1, Entry 2 | Bundle duplication during rapid adds |
 | 7 | Feature request | None | Target price per item (19 promotions) |
 | 8 | Bug (regression from Entry 2) | Entry 2 | Standard auto-apply promos get no adjustments on first link |
+| 9 | Bug | Entry 1 | Rounding loss when non-standard + standard adjustments combine |
 
 ### Reference files
 
