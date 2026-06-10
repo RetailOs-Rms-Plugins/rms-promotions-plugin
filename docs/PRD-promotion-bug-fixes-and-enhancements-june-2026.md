@@ -605,6 +605,38 @@ For fixed/bundle promotions, `is_tax_inclusive` determines whether the value inc
 
 6. **Fix `restoreEvictedStandardPromos` clean context:** compute tax-exclusive subtotal from `unit_price` and tax lines instead of using `unit_price * qty` as the subtotal fallback.
 
+### Entry 11: Admin Route Handlers Drop `is_tax_inclusive` When Writing Line Item Adjustments
+
+**Type:** Bug
+**Severity:** High — manual adjustments with `is_tax_inclusive: true` produce incorrect cart totals in tax-inclusive regions
+
+**Symptom:** A manual cart-wide adjustment of 10€ with `is_tax_inclusive: true` produces a cart total of 5.70€ instead of the expected 7.50€. The ext adjustment record stores `is_tax_inclusive: true` correctly, but the resulting Medusa line item adjustments show `is_tax_inclusive: false`. Medusa treats the 10€ discount as tax-exclusive and adds 18% VAT on top → `discount_total: 11.80€` instead of 10€.
+
+**Root cause:** The admin CRUD route handlers in `src/api/admin/cart-adjustments/` write line item adjustments directly via `cartModule.addLineItemAdjustments` (POST) and `cartModule.setLineItemAdjustments` (PATCH/DELETE), but omit `is_tax_inclusive` (and `metadata`) from the adjustment objects. Medusa's `LineItemAdjustment` model defaults `is_tax_inclusive` to `false` when not provided.
+
+This is distinct from the ADR-0008 fix (which corrected the same omission in `applyExtAdjustmentsToCart` for engine-computed bundle/buyget adjustments). The admin route handlers bypass `applyExtAdjustmentsToCart` entirely — they write line item adjustments inline immediately after creating/updating the ext adjustment record. The ADR-0008 fix never touched these routes.
+
+Six code locations affected across three files:
+
+| File | Handler | What was missing |
+|---|---|---|
+| `[cart_id]/route.ts` | POST (item-specific) | `is_tax_inclusive` on `addLineItemAdjustments` |
+| `[cart_id]/route.ts` | POST (cart-wide spread) | `is_tax_inclusive` on `addLineItemAdjustments` |
+| `[cart_id]/[id]/route.ts` | PATCH | `is_tax_inclusive`, `metadata` on both preserved and updated adjustments |
+| `[cart_id]/[id]/route.ts` | DELETE | `is_tax_inclusive`, `metadata` on preserved adjustments |
+| `[cart_id]/batch/route.ts` | PATCH | `is_tax_inclusive`, `metadata` on both preserved and updated adjustments |
+| `[cart_id]/batch/route.ts` | DELETE | `is_tax_inclusive`, `metadata` on preserved adjustments |
+
+**Designed fix:**
+
+1. **POST handler** — read `is_tax_inclusive` from the validated body (already present in the Zod schema) and forward it to both `addLineItemAdjustments` call sites (item-specific and cart-wide spread).
+
+2. **PATCH handlers** — fetch `is_tax_inclusive` from the existing ext adjustment record (added to the `fields` array in the query). Forward it to the updated adjustment object, and forward each preserved adjustment's `is_tax_inclusive` and `metadata` when re-emitting via `setLineItemAdjustments`.
+
+3. **DELETE handlers** — forward `is_tax_inclusive` and `metadata` from each preserved adjustment when re-emitting via `setLineItemAdjustments`.
+
+4. **Type cast** — Medusa's `UpsertLineItemAdjustmentDTO` type omits `is_tax_inclusive` and `metadata` despite the underlying model and DB column supporting them. Used `as any` cast on the adjustment arrays (same approach as the existing `capAdjustmentsToSubtotal` path which avoids the issue via index signature typing).
+
 ---
 
 ## User Stories

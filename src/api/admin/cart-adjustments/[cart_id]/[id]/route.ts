@@ -47,7 +47,7 @@ export const PATCH = async (
     data: [existing],
   } = await query.graph({
     entity: CART_EXT_ADJUSTMENT_MODEL,
-    fields: ["id", "source", "code", "item_id", "amount"],
+    fields: ["id", "source", "code", "item_id", "amount", "is_tax_inclusive"],
     filters: { id },
   })
 
@@ -81,23 +81,30 @@ export const PATCH = async (
     ? req.validatedBody.description
     : (existing as any).description
 
+  const updatedTaxInclusive = req.validatedBody.is_tax_inclusive !== undefined
+    ? req.validatedBody.is_tax_inclusive
+    : (existing as any).is_tax_inclusive ?? false
+
   await cartModule.setLineItemAdjustments(cart_id, [
     ...remainingAdjustments.map((adj: any) => ({
       id: adj.id,
       item_id: adj.item_id,
       code: adj.code,
       amount: adj.amount,
+      is_tax_inclusive: adj.is_tax_inclusive ?? false,
       description: adj.description,
       promotion_id: adj.promotion_id,
       provider_id: adj.provider_id,
+      metadata: adj.metadata ?? undefined,
     })),
     {
       item_id: (existing as any).item_id,
       code,
       amount: updatedAmount,
+      is_tax_inclusive: updatedTaxInclusive,
       description: updatedDescription ?? undefined,
     },
-  ])
+  ] as any)
 
   const {
     data: [cart_ext_adjustment],
@@ -157,10 +164,12 @@ export const DELETE = async (
       item_id: adj.item_id,
       code: adj.code,
       amount: adj.amount,
+      is_tax_inclusive: adj.is_tax_inclusive ?? false,
       description: adj.description,
       promotion_id: adj.promotion_id,
       provider_id: adj.provider_id,
-    }))
+      metadata: adj.metadata ?? undefined,
+    })) as any
   )
 
   res.status(200).json({ id, object: "cart_ext_adjustment", deleted: true })
