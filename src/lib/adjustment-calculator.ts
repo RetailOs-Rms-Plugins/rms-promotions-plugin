@@ -1,6 +1,7 @@
 export interface EligibleItem {
   id: string
   unit_price: number
+  subtotal: number
   quantity: number
 }
 
@@ -22,6 +23,7 @@ export interface BundleModeConfig {
 export interface BundleApplicationMethod {
   value: number
   max_quantity?: number | null
+  is_tax_inclusive?: boolean
 }
 
 export interface BuyGetRepeatModeConfig {
@@ -35,6 +37,7 @@ export interface BuyGetRepeatApplicationMethod {
   type: "percentage" | "fixed"
   value: number
   max_quantity?: number | null
+  is_tax_inclusive?: boolean
 }
 
 export function computeBundle(
@@ -44,11 +47,13 @@ export function computeBundle(
   applicationMethod: BundleApplicationMethod
 ): PromotionAdjustmentGroup {
   const bundlePrice = applicationMethod.value
+  const useTaxInclusive = applicationMethod.is_tax_inclusive ?? false
 
-  const expandedItems: { item_id: string; unit_price: number }[] = []
+  const expandedItems: { item_id: string; unitAmount: number }[] = []
   for (const item of items) {
+    const unitAmount = useTaxInclusive ? item.unit_price : item.subtotal / item.quantity
     for (let i = 0; i < item.quantity; i++) {
-      expandedItems.push({ item_id: item.id, unit_price: item.unit_price })
+      expandedItems.push({ item_id: item.id, unitAmount })
     }
   }
 
@@ -70,7 +75,7 @@ export function computeBundle(
     const groupStart = b * config.bundle_size
     const groupItems = expandedItems.slice(groupStart, groupStart + config.bundle_size)
 
-    const groupOriginal = groupItems.reduce((sum, i) => sum + i.unit_price, 0)
+    const groupOriginal = groupItems.reduce((sum, i) => sum + i.unitAmount, 0)
     const groupSavings = groupOriginal - bundlePrice
 
     if (groupSavings <= 0) continue
@@ -81,7 +86,7 @@ export function computeBundle(
       const isLast = i === groupItems.length - 1
       const share = isLast
         ? groupSavings - distributed
-        : Math.floor(groupSavings * (item.unit_price / groupOriginal))
+        : groupSavings * (item.unitAmount / groupOriginal)
 
       adjustmentsByItem.set(item.item_id, (adjustmentsByItem.get(item.item_id) ?? 0) + share)
       distributed += share
@@ -106,15 +111,17 @@ export function computeBuyGetRepeat(
 ): PromotionAdjustmentGroup {
   const discountType = applicationMethod.type
   const discountValue = applicationMethod.value
+  const useTaxInclusive = discountType === "fixed" && (applicationMethod.is_tax_inclusive ?? false)
 
-  const expandedItems: { item_id: string; unit_price: number }[] = []
+  const expandedItems: { item_id: string; unitAmount: number }[] = []
   for (const item of items) {
+    const unitAmount = useTaxInclusive ? item.unit_price : item.subtotal / item.quantity
     for (let i = 0; i < item.quantity; i++) {
-      expandedItems.push({ item_id: item.id, unit_price: item.unit_price })
+      expandedItems.push({ item_id: item.id, unitAmount })
     }
   }
 
-  expandedItems.sort((a, b) => a.unit_price - b.unit_price)
+  expandedItems.sort((a, b) => a.unitAmount - b.unitAmount)
 
   const groupSize = config.buy_quantity + config.get_quantity
   let completeGroups = Math.floor(expandedItems.length / groupSize)
@@ -139,9 +146,9 @@ export function computeBuyGetRepeat(
     for (const item of discountedItems) {
       let discount: number
       if (discountType === "percentage") {
-        discount = Math.floor(item.unit_price * (discountValue / 100))
+        discount = item.unitAmount * (discountValue / 100)
       } else {
-        discount = Math.min(discountValue, item.unit_price)
+        discount = Math.min(discountValue, item.unitAmount)
       }
 
       if (discount > 0) {

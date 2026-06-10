@@ -44,6 +44,8 @@ export async function computeNonStandardAdjustments(
     fields: [
       "items.id",
       "items.unit_price",
+      "items.is_tax_inclusive",
+      "items.tax_lines.rate",
       "items.quantity",
       "items.product_id",
       "items.product.collection_id",
@@ -88,10 +90,16 @@ export async function computeNonStandardAdjustments(
 
     const eligibleWithPrices = eligibleItems.map((ei) => {
       const cartItem = (cartWithProducts[0]?.items ?? []).find((i: any) => i.id === ei.id)
+      const unitPrice = typeof cartItem?.unit_price === "number" ? cartItem.unit_price : Number(cartItem?.unit_price ?? 0)
+      const qty = typeof cartItem?.quantity === "number" ? cartItem.quantity : Number(cartItem?.quantity ?? 0)
+      const isTaxInclusive = cartItem?.is_tax_inclusive ?? false
+      const taxRate = (cartItem?.tax_lines ?? []).reduce((sum: number, tl: any) => sum + (Number(tl.rate) || 0), 0)
+      const unitSubtotal = isTaxInclusive && taxRate > 0 ? unitPrice / (1 + taxRate / 100) : unitPrice
       return {
         id: ei.id,
-        unit_price: typeof cartItem?.unit_price === "number" ? cartItem.unit_price : Number(cartItem?.unit_price ?? 0),
-        quantity: typeof cartItem?.quantity === "number" ? cartItem.quantity : Number(cartItem?.quantity ?? 0),
+        unit_price: unitPrice,
+        subtotal: unitSubtotal * qty,
+        quantity: qty,
       }
     })
 
@@ -105,12 +113,14 @@ export async function computeNonStandardAdjustments(
       computedGroup = computeBundle((cfg as any).promotion_id, eligibleWithPrices, modeConfig, {
         value: typeof am?.value === "number" ? am.value : Number(am?.value ?? 0),
         max_quantity: am?.max_quantity ?? null,
+        is_tax_inclusive: (promo as any).is_tax_inclusive ?? false,
       })
     } else if (promotionMode === "buyget_repeat") {
       computedGroup = computeBuyGetRepeat((cfg as any).promotion_id, eligibleWithPrices, modeConfig, {
         type: am?.type === "percentage" ? "percentage" : "fixed",
         value: typeof am?.value === "number" ? am.value : Number(am?.value ?? 0),
         max_quantity: am?.max_quantity ?? null,
+        is_tax_inclusive: (promo as any).is_tax_inclusive ?? false,
       })
     } else {
       continue

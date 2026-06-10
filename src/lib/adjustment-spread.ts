@@ -19,7 +19,7 @@ export function spreadCartAdjustment(
     if (isLast) {
       result.push({ item_id: items[i].id, amount: effectiveAmount - distributed })
     } else {
-      const share = Math.floor(effectiveAmount * (items[i].subtotal / cartSubtotal))
+      const share = effectiveAmount * (items[i].subtotal / cartSubtotal)
       result.push({ item_id: items[i].id, amount: share })
       distributed += share
     }

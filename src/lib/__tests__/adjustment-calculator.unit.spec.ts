@@ -1,7 +1,7 @@
 import { computeBundle, computeBuyGetRepeat, resolveExclusiveNonStandard, capAdjustmentsToSubtotal, type EligibleItem, type BuyGetRepeatModeConfig, type BundleModeConfig, type PromotionAdjustmentGroup } from "../adjustment-calculator"
 
-const makeItems = (items: { id: string; unit_price: number; quantity: number }[]): EligibleItem[] =>
-  items.map((i) => ({ ...i }))
+const makeItems = (items: { id: string; unit_price: number; quantity: number; subtotal?: number }[]): EligibleItem[] =>
+  items.map((i) => ({ ...i, subtotal: i.subtotal ?? i.unit_price * i.quantity }))
 
 // ─── computeBundle ──────────────────────────────────────────────────────────
 
@@ -118,7 +118,7 @@ describe("computeBundle", () => {
     const result = computeBundle("promo_1", items, bundleConfig, { value: 5000, max_quantity: null })
     const totalAdjustment = result.adjustments.reduce((sum, a) => sum + a.amount, 0)
     // 3 bundles: original 18000, cost 15000, savings 3000
-    expect(totalAdjustment).toBe(3000)
+    expect(totalAdjustment).toBeCloseTo(3000, 10)
   })
 
   it("bundle_size=1 sets target price per individual item", () => {

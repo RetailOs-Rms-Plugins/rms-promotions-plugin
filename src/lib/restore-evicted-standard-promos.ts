@@ -152,11 +152,14 @@ export async function restoreEvictedStandardPromos(
   const cleanItems = (cleanCart.items ?? []).map((item: any) => {
     const unitPrice = typeof item.unit_price === "number" ? item.unit_price : Number(item.unit_price ?? 0)
     const qty = typeof item.quantity === "number" ? item.quantity : Number(item.quantity ?? 0)
-    const lineTotal = unitPrice * qty
+    const isTaxInclusive = item.is_tax_inclusive ?? false
+    const taxRate = (item.tax_lines ?? []).reduce((sum: number, tl: any) => sum + (Number(tl.rate) || 0), 0)
+    const unitSubtotal = isTaxInclusive && taxRate > 0 ? unitPrice / (1 + taxRate / 100) : unitPrice
+    const lineSubtotal = unitSubtotal * qty
     return {
       ...item,
-      subtotal: item.subtotal ?? lineTotal,
-      original_total: item.original_total ?? lineTotal,
+      subtotal: lineSubtotal,
+      original_total: item.original_total ?? unitPrice * qty,
       adjustments: [],
     }
   })

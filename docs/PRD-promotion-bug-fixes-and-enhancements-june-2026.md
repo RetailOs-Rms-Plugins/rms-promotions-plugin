@@ -552,6 +552,61 @@ With the fix applied to the example above:
 
 ---
 
+### Entry 10: Adjustment Calculators Use Wrong Price Basis and Round Down
+
+**Type:** Bug
+**Severity:** High — causes negative cart totals with percentage promotions on tax-inclusive items, and loses discount amounts with non-integer prices
+
+**Symptom:** Three manifestations:
+
+1. **Negative cart total with percentage promotions:** A buy-1-get-1-free promotion (100% percentage off) on a 7.50€ tax-inclusive item produces adjustment `amount: 7.50` with `is_tax_inclusive: false`. Medusa treats 7.50 as tax-exclusive and adds 18% tax on top → `discount_total: 8.85` → cart total: **-1.35€**. Vanilla Medusa produces `amount: 6.3559` (tax-exclusive) → `discount_total: 7.50` → cart total: **0€**.
+
+2. **Bundle discount shortfall with tax-inclusive target price:** A "2 for 5€" bundle (tax-inclusive) on items totaling 17.50€ produces savings of 9.83 instead of 12.50. Cart total: 7.67€ instead of 5€. The calculator subtracted a tax-inclusive bundle price (5) from a tax-exclusive group total (14.83) — mixing units.
+
+3. **Math.floor rounding loss:** `computeBuyGetRepeat` used `Math.floor(unit_price * percentage)`, losing up to ~1€ per adjustment on non-integer prices (e.g., 7.50€ item at 100% off → `floor(7.5)` = 7 instead of 7.5). `computeBundle` and `spreadCartAdjustment` had the same `Math.floor` pattern.
+
+**Root cause:** The adjustment calculators were written assuming:
+- Amounts are in minor currency units (cents/agorot) where `Math.floor` loses at most 1 cent
+- Tax doesn't affect the calculation because amounts are always integers
+
+Both assumptions are wrong when the store uses major currency units (€/₪) with tax-inclusive pricing. Three code locations affected:
+
+| Location | Old behavior | Problem |
+|---|---|---|
+| `computeBuyGetRepeat` line 142 | `Math.floor(item.unit_price * (discountValue / 100))` | Uses tax-inclusive `unit_price` + floors result |
+| `computeBundle` line 84 | `Math.floor(groupSavings * (item.unit_price / groupOriginal))` | Uses tax-inclusive prices for proportional split + floors result |
+| `spreadCartAdjustment` line 22 | `Math.floor(effectiveAmount * (items[i].subtotal / cartSubtotal))` | Floors proportional share, skewing per-item distribution |
+
+Additionally, `restoreEvictedStandardPromos` built its clean context for `computeActions` with `subtotal: unitPrice * qty` (tax-inclusive). Medusa's `computeActions` expects tax-exclusive subtotal. This caused percentage promotions restored via this path to produce adjustments based on the wrong (inflated) base amount.
+
+**How Medusa handles percentage promotions (verified from source):**
+
+Medusa's `calculateAdjustmentAmountFromPromotion` uses `item.subtotal` (tax-exclusive) when `is_tax_inclusive: false`, and `item.original_total` (tax-inclusive) when `is_tax_inclusive: true`. For percentage promotions, the admin UI hides the `is_tax_inclusive` field and defaults to `false`. Therefore percentage discounts are always computed on the tax-exclusive base.
+
+For fixed/bundle promotions, `is_tax_inclusive` determines whether the value includes tax. A bundle "2 for 5€" with `is_tax_inclusive: true` means the 5€ target price includes tax → savings must be computed against tax-inclusive original prices.
+
+**Designed fix:**
+
+1. **Add `subtotal` field to `EligibleItem` interface** — carries the tax-exclusive subtotal (computed as `unit_price / (1 + taxRate/100) * qty`) alongside the tax-inclusive `unit_price`.
+
+2. **Pass `is_tax_inclusive` to calculator functions** via the `applicationMethod` parameter. Added to both `BundleApplicationMethod` and `BuyGetRepeatApplicationMethod` interfaces.
+
+3. **Calculator functions pick the correct price basis per context:**
+   - `computeBuyGetRepeat` percentage: always tax-exclusive `unit_subtotal` (matches Medusa native)
+   - `computeBuyGetRepeat` fixed: `unit_price` when `is_tax_inclusive: true`, `unit_subtotal` when `false`
+   - `computeBundle`: `unit_price` when `is_tax_inclusive: true`, `unit_subtotal` when `false` (both sides of `groupOriginal - bundlePrice` use the same tax basis)
+
+4. **Remove all `Math.floor` calls on monetary amounts:**
+   - `computeBuyGetRepeat`: direct multiplication, no floor
+   - `computeBundle`: proportional share without floor (remainder correction on last item preserves total)
+   - `spreadCartAdjustment`: proportional share without floor (remainder correction on last item preserves total)
+
+5. **Fetch tax lines in cart query** (`compute-non-standard-adjustments.ts`): replaced `items.subtotal` (unreliable — returns post-discount values) with `items.is_tax_inclusive` + `items.tax_lines.rate`, computing tax-exclusive subtotal as `unit_price / (1 + taxRate/100) * qty`.
+
+6. **Fix `restoreEvictedStandardPromos` clean context:** compute tax-exclusive subtotal from `unit_price` and tax lines instead of using `unit_price * qty` as the subtotal fallback.
+
+---
+
 ## User Stories
 
 1. As a customer, I want only the best promotion to apply to each item in my cart, so that my cart total never goes negative from stacked discounts.
@@ -566,6 +621,8 @@ With the fix applied to the example above:
 10. As a developer, I want `restoreEvictedStandardPromos` to only link promotions that produce adjustments, so that phantom promotion links don't accumulate on carts.
 11. As a customer, I want standard auto-apply promotions to produce discounts immediately when my first item is added to the cart, not only after a second mutation.
 12. As a customer, I want the full discount applied when non-standard and standard promotions combine, without small amounts lost to rounding.
+13. As a customer, I want percentage promotions on tax-inclusive items to produce correct discounts (not negative totals), matching Medusa's native tax-aware calculation.
+14. As a merchant, I want bundle target prices to respect the `is_tax_inclusive` flag so that "2 for 5€ tax-inclusive" means the customer pays exactly 5€.
 
 ---
 
@@ -653,6 +710,7 @@ Existing test files follow the pattern of mocking the Medusa container (`contain
 4. **Entry 1** (two-phase resolution) — builds on the Entry 2 refactor. The greedy algorithm and budget cap are implemented in the same code path that Entry 2 consolidates into the hook.
 5. **Entry 8** (freshly-linked standard promo adjustments) — fixes a regression introduced by Entry 2. Must be implemented after Entry 2.
 6. **Entry 9** (budget cap rounding fix) — replaces proportional scaling with sequential capping in `capAdjustmentsToSubtotal`. Must be implemented after Entry 1 (which introduced the function).
+7. **Entry 10** (calculator tax basis + Math.floor fix) — switches calculators to tax-aware price basis and removes Math.floor. Must be implemented after Entry 9 (same files).
 
 ### Relationship between entries
 
@@ -667,6 +725,7 @@ Existing test files follow the pattern of mocking the Medusa container (`contain
 | 7 | Feature request | None | Target price per item (19 promotions) |
 | 8 | Bug (regression from Entry 2) | Entry 2 | Standard auto-apply promos get no adjustments on first link |
 | 9 | Bug | Entry 1 | Rounding loss when non-standard + standard adjustments combine |
+| 10 | Bug | None | Wrong tax basis + Math.floor in calculators, negative totals with percentage promos |
 
 ### Reference files
 
