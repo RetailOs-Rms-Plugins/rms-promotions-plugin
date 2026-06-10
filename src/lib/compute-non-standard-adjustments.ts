@@ -9,7 +9,7 @@ import { restoreEvictedStandardPromos } from "./restore-evicted-standard-promos"
 export async function computeNonStandardAdjustments(
   cartId: string,
   container: any,
-  options?: { appliedPromotionCodes?: string[] }
+  options?: { appliedPromotionCodes?: string[]; freshlyLinkedCodes?: string[] }
 ): Promise<void> {
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
   const service: PromotionExtModuleService = container.resolve(PROMOTION_EXT_MODULE)
@@ -19,7 +19,7 @@ export async function computeNonStandardAdjustments(
     (c: any) => c.promotion_mode && c.promotion_mode !== "standard"
   )
 
-  if (!nonStandardConfigs.length) return
+  if (!nonStandardConfigs.length && !options?.freshlyLinkedCodes?.length) return
 
   const appliedCodes = await resolveAppliedCodes(cartId, query, options?.appliedPromotionCodes)
 
@@ -159,7 +159,7 @@ export async function computeNonStandardAdjustments(
     }
   }
 
-  await applyExtAdjustmentsToCart(cartId, nonStandardConfigs, container)
+  await applyExtAdjustmentsToCart(cartId, nonStandardConfigs, container, options?.freshlyLinkedCodes)
 }
 
 async function resolveAppliedCodes(
@@ -180,7 +180,8 @@ async function resolveAppliedCodes(
 async function applyExtAdjustmentsToCart(
   cartId: string,
   nonStandardConfigs: any[],
-  container: any
+  container: any,
+  freshlyLinkedCodes?: string[]
 ): Promise<void> {
   const service: PromotionExtModuleService = container.resolve(PROMOTION_EXT_MODULE)
   const cartExtAdjustments = await service.listCartExtAdjustments({ cart_id: cartId })
@@ -188,7 +189,7 @@ async function applyExtAdjustmentsToCart(
   const hasCustomAdjustments = cartExtAdjustments.length > 0
   const hasCustomModePromos = customModePromoIds.size > 0
 
-  if (!hasCustomAdjustments && !hasCustomModePromos) return
+  if (!hasCustomAdjustments && !hasCustomModePromos && !freshlyLinkedCodes?.length) return
 
   const cartModule = container.resolve(Modules.CART)
   const fullCart = await cartModule.retrieveCart(cartId, { relations: ["items.adjustments", "items"] })
@@ -256,7 +257,9 @@ async function applyExtAdjustmentsToCart(
     }
   }
 
-  const restoredAdjustments = await restoreEvictedStandardPromos(cartId, customModePromoIds, container)
+  const restoredAdjustments = await restoreEvictedStandardPromos(cartId, customModePromoIds, container, {
+    freshlyLinkedCodes: freshlyLinkedCodes?.length ? new Set(freshlyLinkedCodes) : undefined,
+  })
 
   const itemSubtotals = new Map<string, number>()
   for (const item of (fullCart.items ?? [])) {

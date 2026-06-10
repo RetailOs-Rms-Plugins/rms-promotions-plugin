@@ -125,6 +125,7 @@ export default async function cartUpdatedHandler({
 
   await computeNonStandardAdjustments(cartId, container, {
     appliedPromotionCodes,
+    freshlyLinkedCodes: actualToAdd,
   })
 }
 

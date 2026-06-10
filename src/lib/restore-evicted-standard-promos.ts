@@ -32,7 +32,8 @@ interface RestoredAdjustment {
 export async function restoreEvictedStandardPromos(
   cartId: string,
   customModePromoIds: Set<string>,
-  container: any
+  container: any,
+  options?: { freshlyLinkedCodes?: Set<string> }
 ): Promise<RestoredAdjustment[]> {
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
   const service: PromotionExtModuleService = container.resolve(PROMOTION_EXT_MODULE)
@@ -91,7 +92,7 @@ export async function restoreEvictedStandardPromos(
   const evictedPromos: { id: string; code: string; is_tax_inclusive: boolean }[] = []
 
   for (const promotion of promotions) {
-    if (linkedPromoIds.has(promotion.id)) continue
+    if (linkedPromoIds.has(promotion.id) && !options?.freshlyLinkedCodes?.has(promotion.code)) continue
 
     const isActive =
       promotion.status === "active" &&
@@ -190,13 +191,19 @@ export async function restoreEvictedStandardPromos(
 
   if (!promosWithAdjustments.length) return []
 
-  const remoteLink = container.resolve(ContainerRegistrationKeys.LINK)
-  await remoteLink.create(
-    promosWithAdjustments.map((p) => ({
-      [Modules.CART]: { cart_id: cartId },
-      [Modules.PROMOTION]: { promotion_id: p.id },
-    }))
+  const promosToLink = promosWithAdjustments.filter(
+    (p) => !options?.freshlyLinkedCodes?.has(p.code)
   )
+
+  if (promosToLink.length) {
+    const remoteLink = container.resolve(ContainerRegistrationKeys.LINK)
+    await remoteLink.create(
+      promosToLink.map((p) => ({
+        [Modules.CART]: { cart_id: cartId },
+        [Modules.PROMOTION]: { promotion_id: p.id },
+      }))
+    )
+  }
 
   const promoCodeToId = new Map(promosWithAdjustments.map((p) => [p.code, p.id]))
   const promoCodeToTaxInclusive = new Map(promosWithAdjustments.map((p) => [p.code, p.is_tax_inclusive]))

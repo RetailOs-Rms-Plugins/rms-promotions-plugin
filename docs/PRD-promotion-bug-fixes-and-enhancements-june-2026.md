@@ -476,6 +476,37 @@ The only change: the Zod validation in `src/api/admin/promotion-ext-configs/vali
 
 ---
 
+### Entry 8: Standard Auto-Apply Promos Get No Adjustments on First Link (Regression from Entry 2)
+
+**Type:** Bug (regression introduced by Entry 2 refactor)
+**Severity:** Medium — standard auto-apply promotions linked with `discount_total=0` on first cart mutation
+
+**Symptom:** When adding an item to a fresh cart, standard auto-apply promotions get linked to the cart but produce no adjustments (`discount_total=0`, `adjustments=[]`). The promotion appears in `cart.promotions` correctly, but the discount is missing. On the next cart mutation (add another item, change quantity), the discount appears correctly. A page refresh after the second mutation shows the correct total.
+
+Example: "10off" (standard, auto_apply=ON, fixed 10€ off, targets "Medusa Sweatpants") gets linked when adding Sweatpants to an empty cart. The POST response shows `discount_total: 0`. Adding a second item triggers `updateCartPromotionsWorkflow(REPLACE)` which now sees the linked promo and computes the 10€ adjustment.
+
+**Root cause:** The Entry 2 refactor moved `evaluateAutoApplyPromotions` into the `beforeRefreshingPaymentCollection` hook, which fires AFTER `updateCartPromotionsWorkflow(REPLACE)` has already computed native adjustments. The timing:
+
+1. `updateCartPromotionsWorkflow(REPLACE)` runs — computes native adjustments for **currently linked** promos. On a fresh cart, no promos are linked → nothing computed.
+2. Hook fires → `evaluateAutoApplyPromotions` finds eligible promos, links them via `remoteLink.create`.
+3. Hook continues → `computeNonStandardAdjustments` runs. For non-standard promos (bundle, buyget_repeat), adjustments are computed directly. But for standard promos, adjustments come from Medusa's native `computeActions` — which already ran in step 1 when the promo wasn't linked yet.
+4. `restoreEvictedStandardPromos` skips the freshly-linked promos because they ARE linked (`if (linkedPromoIds.has(promotion.id)) continue`) — the function was designed to restore promos that are NOT linked.
+
+Before Entry 2, `evaluateAutoApplyPromotions` called `updateCartPromotionsWorkflow(ADD)` which triggered `computeActions` for all linked promos including newly-added ones. The switch to direct `remoteLink.create` eliminated that computation step.
+
+**Why this wasn't caught earlier:** The bug self-heals on the next cart mutation. Step 1 of the next `refreshCartItemsWorkflow` sees the promo already linked and computes its adjustments. The `cart.updated` subscriber also eventually runs, but it had the same gap (addressed in the fix).
+
+**Designed fix:** Thread newly-linked promo codes from `evaluateAutoApplyPromotions` through to `restoreEvictedStandardPromos` so it computes their adjustments via `computeActions`:
+
+1. The hook captures `added` codes from `evaluateAutoApplyPromotions` and passes them as `freshlyLinkedCodes` to `computeNonStandardAdjustments`.
+2. `computeNonStandardAdjustments` threads `freshlyLinkedCodes` through to `applyExtAdjustmentsToCart` → `restoreEvictedStandardPromos`. Early returns at both levels are updated to not bail when `freshlyLinkedCodes` is present.
+3. `restoreEvictedStandardPromos` accepts an optional `freshlyLinkedCodes: Set<string>`. For promos whose code is in this set: (a) don't skip even though they're linked, (b) compute adjustments via `computeActions` as usual, (c) skip `remoteLink.create` since they're already linked.
+4. The same fix is applied to the `cart.updated` subscriber fallback path.
+
+All parameter additions are optional — backward compatible with existing call sites.
+
+---
+
 ## User Stories
 
 1. As a customer, I want only the best promotion to apply to each item in my cart, so that my cart total never goes negative from stacked discounts.
@@ -488,6 +519,7 @@ The only change: the Zod validation in `src/api/admin/promotion-ext-configs/vali
 8. As a merchant, I want the API to never return duplicate adjustment errors when customers add items to their cart, so that the storefront doesn't show error states.
 9. As a developer, I want all promotion computation to happen inside the workflow's distributed lock, so that concurrent cart mutations cannot interleave and produce inconsistent state.
 10. As a developer, I want `restoreEvictedStandardPromos` to only link promotions that produce adjustments, so that phantom promotion links don't accumulate on carts.
+11. As a customer, I want standard auto-apply promotions to produce discounts immediately when my first item is added to the cart, not only after a second mutation.
 
 ---
 
@@ -573,6 +605,7 @@ Existing test files follow the pattern of mocking the Medusa container (`contain
 2. **Entry 7** (bundle_size validation) — one-line change, unblocks 19 promotions.
 3. **Entry 2** (move logic into hook) — architectural refactor that fixes the race condition, duplicate ID errors (Entry 4), and duplicate adjustments (Entry 6). Should be done before Entry 1 because it changes where the resolution logic runs.
 4. **Entry 1** (two-phase resolution) — builds on the Entry 2 refactor. The greedy algorithm and budget cap are implemented in the same code path that Entry 2 consolidates into the hook.
+5. **Entry 8** (freshly-linked standard promo adjustments) — fixes a regression introduced by Entry 2. Must be implemented after Entry 2.
 
 ### Relationship between entries
 
@@ -585,6 +618,7 @@ Existing test files follow the pattern of mocking the Medusa container (`contain
 | 5 | False report | Entry 3 | N/A — not a real bug |
 | 6 | Bug (Entry 1 + Entry 2) | Entry 1, Entry 2 | Bundle duplication during rapid adds |
 | 7 | Feature request | None | Target price per item (19 promotions) |
+| 8 | Bug (regression from Entry 2) | Entry 2 | Standard auto-apply promos get no adjustments on first link |
 
 ### Reference files
 

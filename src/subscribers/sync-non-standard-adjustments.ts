@@ -22,7 +22,7 @@ refreshCartItemsWorkflow.hooks.beforeRefreshingPaymentCollection(
     const cartId = (input as any).cart_id
     if (!cartId) return
 
-    await evaluateAutoApplyPromotions(cartId, container)
-    await computeNonStandardAdjustments(cartId, container)
+    const { added } = await evaluateAutoApplyPromotions(cartId, container)
+    await computeNonStandardAdjustments(cartId, container, { freshlyLinkedCodes: added })
   }
 )
