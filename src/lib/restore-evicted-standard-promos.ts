@@ -32,7 +32,8 @@ interface RestoredAdjustment {
 export async function restoreEvictedStandardPromos(
   cartId: string,
   customModePromoIds: Set<string>,
-  container: any
+  container: any,
+  options?: { freshlyLinkedCodes?: Set<string> }
 ): Promise<RestoredAdjustment[]> {
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
   const service: PromotionExtModuleService = container.resolve(PROMOTION_EXT_MODULE)
@@ -91,7 +92,7 @@ export async function restoreEvictedStandardPromos(
   const evictedPromos: { id: string; code: string; is_tax_inclusive: boolean }[] = []
 
   for (const promotion of promotions) {
-    if (linkedPromoIds.has(promotion.id)) continue
+    if (linkedPromoIds.has(promotion.id) && !options?.freshlyLinkedCodes?.has(promotion.code)) continue
 
     const isActive =
       promotion.status === "active" &&
@@ -115,14 +116,6 @@ export async function restoreEvictedStandardPromos(
   }
 
   if (!evictedPromos.length) return []
-
-  const remoteLink = container.resolve(ContainerRegistrationKeys.LINK)
-  await remoteLink.create(
-    evictedPromos.map((p) => ({
-      [Modules.CART]: { cart_id: cartId },
-      [Modules.PROMOTION]: { promotion_id: p.id },
-    }))
-  )
 
   const promotionService = container.resolve(Modules.PROMOTION)
 
@@ -159,11 +152,14 @@ export async function restoreEvictedStandardPromos(
   const cleanItems = (cleanCart.items ?? []).map((item: any) => {
     const unitPrice = typeof item.unit_price === "number" ? item.unit_price : Number(item.unit_price ?? 0)
     const qty = typeof item.quantity === "number" ? item.quantity : Number(item.quantity ?? 0)
-    const lineTotal = unitPrice * qty
+    const isTaxInclusive = item.is_tax_inclusive ?? false
+    const taxRate = (item.tax_lines ?? []).reduce((sum: number, tl: any) => sum + (Number(tl.rate) || 0), 0)
+    const unitSubtotal = isTaxInclusive && taxRate > 0 ? unitPrice / (1 + taxRate / 100) : unitPrice
+    const lineSubtotal = unitSubtotal * qty
     return {
       ...item,
-      subtotal: item.subtotal ?? lineTotal,
-      original_total: item.original_total ?? lineTotal,
+      subtotal: lineSubtotal,
+      original_total: item.original_total ?? unitPrice * qty,
       adjustments: [],
     }
   })
@@ -185,8 +181,35 @@ export async function restoreEvictedStandardPromos(
     prevent_auto_promotions: true,
   })
 
-  const promoCodeToId = new Map(evictedPromos.map((p) => [p.code, p.id]))
-  const promoCodeToTaxInclusive = new Map(evictedPromos.map((p) => [p.code, p.is_tax_inclusive]))
+  const codesWithAdjustments = new Set<string>()
+  for (const action of actions) {
+    if ((action as any).action === "addItemAdjustment") {
+      codesWithAdjustments.add((action as any).code)
+    }
+  }
+
+  const promosWithAdjustments = evictedPromos.filter((p) =>
+    codesWithAdjustments.has(p.code)
+  )
+
+  if (!promosWithAdjustments.length) return []
+
+  const promosToLink = promosWithAdjustments.filter(
+    (p) => !options?.freshlyLinkedCodes?.has(p.code)
+  )
+
+  if (promosToLink.length) {
+    const remoteLink = container.resolve(ContainerRegistrationKeys.LINK)
+    await remoteLink.create(
+      promosToLink.map((p) => ({
+        [Modules.CART]: { cart_id: cartId },
+        [Modules.PROMOTION]: { promotion_id: p.id },
+      }))
+    )
+  }
+
+  const promoCodeToId = new Map(promosWithAdjustments.map((p) => [p.code, p.id]))
+  const promoCodeToTaxInclusive = new Map(promosWithAdjustments.map((p) => [p.code, p.is_tax_inclusive]))
 
   const restoredAdjustments: RestoredAdjustment[] = []
   for (const action of actions) {

@@ -1,7 +1,7 @@
-import { computeBundle, computeBuyGetRepeat, type EligibleItem, type BuyGetRepeatModeConfig, type BundleModeConfig } from "../adjustment-calculator"
+import { computeBundle, computeBuyGetRepeat, resolveExclusiveNonStandard, capAdjustmentsToSubtotal, type EligibleItem, type BuyGetRepeatModeConfig, type BundleModeConfig, type PromotionAdjustmentGroup } from "../adjustment-calculator"
 
-const makeItems = (items: { id: string; unit_price: number; quantity: number }[]): EligibleItem[] =>
-  items.map((i) => ({ ...i }))
+const makeItems = (items: { id: string; unit_price: number; quantity: number; subtotal?: number }[]): EligibleItem[] =>
+  items.map((i) => ({ ...i, subtotal: i.subtotal ?? i.unit_price * i.quantity }))
 
 // ─── computeBundle ──────────────────────────────────────────────────────────
 
@@ -118,7 +118,59 @@ describe("computeBundle", () => {
     const result = computeBundle("promo_1", items, bundleConfig, { value: 5000, max_quantity: null })
     const totalAdjustment = result.adjustments.reduce((sum, a) => sum + a.amount, 0)
     // 3 bundles: original 18000, cost 15000, savings 3000
-    expect(totalAdjustment).toBe(3000)
+    expect(totalAdjustment).toBeCloseTo(3000, 10)
+  })
+
+  it("bundle_size=1 sets target price per individual item", () => {
+    const singleConfig: BundleModeConfig = { bundle_size: 1, remainder: "full_price" }
+    const items = makeItems([
+      { id: "item_a", unit_price: 6000, quantity: 1 },
+      { id: "item_b", unit_price: 7200, quantity: 1 },
+      { id: "item_c", unit_price: 5500, quantity: 1 },
+      { id: "item_d", unit_price: 13000, quantity: 1 },
+    ])
+    // target price 4990 per item
+    // item_a: 6000 - 4990 = 1010
+    // item_b: 7200 - 4990 = 2210
+    // item_c: 5500 - 4990 = 510
+    // item_d: 13000 - 4990 = 8010
+    // total savings = 11740
+    const result = computeBundle("promo_1", items, singleConfig, { value: 4990 })
+    const totalAdjustment = result.adjustments.reduce((sum, a) => sum + a.amount, 0)
+    expect(totalAdjustment).toBe(11740)
+    expect(result.adjustments).toHaveLength(4)
+    const byItem = new Map(result.adjustments.map((a) => [a.item_id, a.amount]))
+    expect(byItem.get("item_a")).toBe(1010)
+    expect(byItem.get("item_b")).toBe(2210)
+    expect(byItem.get("item_c")).toBe(510)
+    expect(byItem.get("item_d")).toBe(8010)
+  })
+
+  it("each bundle group distributes savings independently", () => {
+    // bundle_size=2, two groups with different price mixes
+    const items = makeItems([
+      { id: "item_expensive", unit_price: 5000, quantity: 2 },
+      { id: "item_cheap", unit_price: 1000, quantity: 2 },
+    ])
+    // expanded: [expensive, expensive, cheap, cheap]
+    // group 1: expensive(5000) + expensive(5000) = 10000, bundle=3000, savings=7000
+    //   each gets floor(7000 * 5000/10000) = 3500
+    // group 2: cheap(1000) + cheap(1000) = 2000, bundle=3000, savings=-1000 → no savings
+    // only group 1 should produce adjustments
+    const result = computeBundle("promo_1", items, { bundle_size: 2, remainder: "full_price" }, { value: 3000 })
+    const byItem = new Map(result.adjustments.map((a) => [a.item_id, a.amount]))
+    expect(byItem.get("item_expensive")).toBe(7000)
+    expect(byItem.has("item_cheap")).toBe(false)
+  })
+
+  it("bundle_size=1 skips items cheaper than target price", () => {
+    const singleConfig: BundleModeConfig = { bundle_size: 1, remainder: "full_price" }
+    const items = makeItems([
+      { id: "item_cheap", unit_price: 1000, quantity: 1 },
+    ])
+    // target price 4990 > item price 1000 → no savings
+    const result = computeBundle("promo_1", items, singleConfig, { value: 4990 })
+    expect(result.adjustments).toHaveLength(0)
   })
 })
 
@@ -268,5 +320,200 @@ describe("computeBuyGetRepeat", () => {
     const totalAdjustment = result.adjustments.reduce((sum, a) => sum + a.amount, 0)
     // 3 groups, 3 free items at 2000 = 6000
     expect(totalAdjustment).toBe(6000)
+  })
+})
+
+// ─── resolveExclusiveNonStandard ────────────────────────────────────────────
+
+describe("resolveExclusiveNonStandard", () => {
+  it("picks the higher-savings promo when two promos target the same items", () => {
+    const groups: PromotionAdjustmentGroup[] = [
+      {
+        promotion_id: "bundle_a",
+        adjustments: [
+          { item_id: "item_x", amount: 1000 },
+          { item_id: "item_y", amount: 1000 },
+        ],
+      },
+      {
+        promotion_id: "bundle_b",
+        adjustments: [
+          { item_id: "item_x", amount: 2000 },
+          { item_id: "item_y", amount: 2000 },
+        ],
+      },
+    ]
+    const result = resolveExclusiveNonStandard(groups)
+    expect(result).toHaveLength(1)
+    expect(result[0].promotion_id).toBe("bundle_b")
+  })
+
+  it("keeps both promos when they target different items", () => {
+    const groups: PromotionAdjustmentGroup[] = [
+      {
+        promotion_id: "bundle_a",
+        adjustments: [{ item_id: "item_x", amount: 1000 }],
+      },
+      {
+        promotion_id: "bundle_b",
+        adjustments: [{ item_id: "item_y", amount: 2000 }],
+      },
+    ]
+    const result = resolveExclusiveNonStandard(groups)
+    expect(result).toHaveLength(2)
+  })
+
+  it("skips entire promo when any of its items are claimed (all-or-nothing)", () => {
+    // bundle_a claims item_x and item_y (savings=3000)
+    // bundle_b needs item_y and item_z (savings=1500) — item_y claimed → skip all of bundle_b
+    const groups: PromotionAdjustmentGroup[] = [
+      {
+        promotion_id: "bundle_a",
+        adjustments: [
+          { item_id: "item_x", amount: 2000 },
+          { item_id: "item_y", amount: 1000 },
+        ],
+      },
+      {
+        promotion_id: "bundle_b",
+        adjustments: [
+          { item_id: "item_y", amount: 500 },
+          { item_id: "item_z", amount: 1000 },
+        ],
+      },
+    ]
+    const result = resolveExclusiveNonStandard(groups)
+    expect(result).toHaveLength(1)
+    expect(result[0].promotion_id).toBe("bundle_a")
+  })
+
+  it("returns single promo as-is", () => {
+    const groups: PromotionAdjustmentGroup[] = [
+      {
+        promotion_id: "bundle_a",
+        adjustments: [{ item_id: "item_x", amount: 5000 }],
+      },
+    ]
+    const result = resolveExclusiveNonStandard(groups)
+    expect(result).toHaveLength(1)
+    expect(result[0].promotion_id).toBe("bundle_a")
+  })
+
+  it("returns empty for empty input", () => {
+    expect(resolveExclusiveNonStandard([])).toHaveLength(0)
+  })
+
+  it("skips promos with no adjustments", () => {
+    const groups: PromotionAdjustmentGroup[] = [
+      { promotion_id: "bundle_a", adjustments: [] },
+      {
+        promotion_id: "bundle_b",
+        adjustments: [{ item_id: "item_x", amount: 1000 }],
+      },
+    ]
+    const result = resolveExclusiveNonStandard(groups)
+    expect(result).toHaveLength(1)
+    expect(result[0].promotion_id).toBe("bundle_b")
+  })
+})
+
+// ─── capAdjustmentsToSubtotal ───────────────────────────────────────────────
+
+describe("capAdjustmentsToSubtotal", () => {
+  it("caps non-priority adjustments sequentially when total exceeds item subtotal", () => {
+    const itemSubtotals = new Map([["item_x", 5000]])
+    const priorityAdjustments = [{ item_id: "item_x", amount: 3000 }]
+    const otherAdjustments = [
+      { item_id: "item_x", amount: 2000, code: "std_a" },
+      { item_id: "item_x", amount: 2000, code: "std_b" },
+    ]
+    // priority: 3000, remaining: 2000
+    // sorted: std_a(2000), std_b(2000) — same value, first gets full 2000, second gets 0
+    const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, otherAdjustments)
+    const totalForX = result.filter((a) => a.item_id === "item_x").reduce((s, a) => s + a.amount, 0)
+    expect(totalForX).toBeLessThanOrEqual(5000)
+    expect(totalForX).toBe(5000)
+  })
+
+  it("leaves adjustments unchanged when within budget", () => {
+    const itemSubtotals = new Map([["item_x", 10000]])
+    const priorityAdjustments = [{ item_id: "item_x", amount: 3000 }]
+    const otherAdjustments = [
+      { item_id: "item_x", amount: 2000, code: "std_a" },
+    ]
+    const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, otherAdjustments)
+    const totalForX = result.filter((a) => a.item_id === "item_x").reduce((s, a) => s + a.amount, 0)
+    expect(totalForX).toBe(5000)
+  })
+
+  it("zeros out other adjustments when priority already consumes full subtotal", () => {
+    const itemSubtotals = new Map([["item_x", 5000]])
+    const priorityAdjustments = [{ item_id: "item_x", amount: 5000 }]
+    const otherAdjustments = [
+      { item_id: "item_x", amount: 2000, code: "std_a" },
+    ]
+    const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, otherAdjustments)
+    const totalForX = result.filter((a) => a.item_id === "item_x").reduce((s, a) => s + a.amount, 0)
+    expect(totalForX).toBe(5000)
+  })
+
+  it("handles multiple items independently", () => {
+    const itemSubtotals = new Map([["item_x", 5000], ["item_y", 3000]])
+    const priorityAdjustments = [
+      { item_id: "item_x", amount: 4000 },
+      { item_id: "item_y", amount: 1000 },
+    ]
+    const otherAdjustments = [
+      { item_id: "item_x", amount: 3000, code: "std" },
+      { item_id: "item_y", amount: 1000, code: "std" },
+    ]
+    const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, otherAdjustments)
+    const totalForX = result.filter((a) => a.item_id === "item_x").reduce((s, a) => s + a.amount, 0)
+    const totalForY = result.filter((a) => a.item_id === "item_y").reduce((s, a) => s + a.amount, 0)
+    expect(totalForX).toBeLessThanOrEqual(5000)
+    expect(totalForY).toBeLessThanOrEqual(3000)
+    // item_x: priority 4000, remaining 1000, other capped to 1000
+    expect(totalForX).toBe(5000)
+    // item_y: priority 1000, remaining 2000, other 1000 fits → no cap
+    expect(totalForY).toBe(2000)
+  })
+
+  it("no rounding loss — sequential capping uses full remaining budget", () => {
+    const itemSubtotals = new Map([["item_x", 100]])
+    const priorityAdjustments: { item_id: string; amount: number }[] = []
+    const otherAdjustments = [
+      { item_id: "item_x", amount: 33, code: "std_a" },
+      { item_id: "item_x", amount: 33, code: "std_b" },
+      { item_id: "item_x", amount: 35, code: "std_c" },
+    ]
+    // total others: 101, exceeds subtotal 100
+    // sorted: std_c(35), std_a(33), std_b(33)
+    // std_c: min(35, 100) = 35, remaining = 65
+    // std_a: min(33, 65) = 33, remaining = 32
+    // std_b: min(33, 32) = 32, remaining = 0
+    // total = 35 + 33 + 32 = 100 — exact, no rounding loss
+    const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, otherAdjustments)
+    const totalForX = result.filter((a) => a.item_id === "item_x").reduce((s, a) => s + a.amount, 0)
+    expect(totalForX).toBe(100)
+  })
+
+  it("highest-value adjustment gets priority when budget is tight", () => {
+    const itemSubtotals = new Map([["item_x", 50]])
+    const priorityAdjustments = [{ item_id: "item_x", amount: 30 }]
+    const otherAdjustments = [
+      { item_id: "item_x", amount: 10, code: "std_small" },
+      { item_id: "item_x", amount: 25, code: "std_large" },
+    ]
+    // remaining after priority: 20
+    // sorted: std_large(25), std_small(10)
+    // std_large: min(25, 20) = 20, remaining = 0
+    // std_small: min(10, 0) = 0
+    const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, otherAdjustments)
+    const large = result.find((a) => (a as any).code === "std_large")
+    const small = result.find((a) => (a as any).code === "std_small")
+    expect(large?.amount).toBe(20)
+    expect(small?.amount).toBe(0)
+    const totalForX = result.filter((a) => a.item_id === "item_x").reduce((s, a) => s + a.amount, 0)
+    expect(totalForX).toBe(50)
   })
 })

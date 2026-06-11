@@ -76,15 +76,18 @@ export const POST = async (
 
   const cartModule = req.scope.resolve(Modules.CART)
 
+  const taxInclusive = is_tax_inclusive ?? false
+
   if (item_id) {
     await cartModule.addLineItemAdjustments(cart_id, [
       {
         item_id,
         code,
         amount,
+        is_tax_inclusive: taxInclusive,
         description: description ?? undefined,
       },
-    ])
+    ] as any)
   } else {
     const cart = await cartModule.retrieveCart(cart_id, { relations: ["items"] })
     const cartItems = (cart.items ?? []).map((item: any) => {
@@ -96,7 +99,7 @@ export const POST = async (
     if (spread.length) {
       await cartModule.addLineItemAdjustments(
         cart_id,
-        spread.map((s) => ({ item_id: s.item_id, code, amount: s.amount, description: description ?? undefined }))
+        spread.map((s) => ({ item_id: s.item_id, code, amount: s.amount, is_tax_inclusive: taxInclusive, description: description ?? undefined })) as any
       )
     }
   }

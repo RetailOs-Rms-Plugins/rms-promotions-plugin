@@ -109,17 +109,20 @@ export const PATCH = async (
       item_id: adj.item_id,
       code: adj.code,
       amount: adj.amount,
+      is_tax_inclusive: adj.is_tax_inclusive ?? false,
       description: adj.description,
       promotion_id: adj.promotion_id,
       provider_id: adj.provider_id,
+      metadata: adj.metadata ?? undefined,
     })),
     ...updatedRows.map((adj: any) => ({
       item_id: adj.item_id,
       code: adj.code,
       amount: adj.amount,
+      is_tax_inclusive: adj.is_tax_inclusive ?? false,
       description: adj.description ?? undefined,
     })),
-  ])
+  ] as any)
 
   const { data: cart_ext_adjustments } = await query.graph({
     entity: CART_EXT_ADJUSTMENT_MODEL,
@@ -166,10 +169,12 @@ export const DELETE = async (
       item_id: adj.item_id,
       code: adj.code,
       amount: adj.amount,
+      is_tax_inclusive: adj.is_tax_inclusive ?? false,
       description: adj.description,
       promotion_id: adj.promotion_id,
       provider_id: adj.provider_id,
-    }))
+      metadata: adj.metadata ?? undefined,
+    })) as any
   )
 
   res.status(200).json({ ids, deleted: true })

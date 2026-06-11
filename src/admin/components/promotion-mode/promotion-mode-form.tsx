@@ -180,11 +180,11 @@ export function PromotionModeForm({
               <Controller
                 name="bundle_size"
                 control={control}
-                rules={{ required: true, min: 2 }}
+                rules={{ required: true, min: 1 }}
                 render={({ field }) => (
                   <Input
                     type="number"
-                    min={2}
+                    min={1}
                     placeholder="3"
                     {...field}
                     value={field.value ?? ""}

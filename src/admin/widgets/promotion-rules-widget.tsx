@@ -170,9 +170,11 @@ const PromotionRulesWidget = ({ data }: DetailWidgetProps<AdminPromotion>) => {
       <Prompt open={confirmClose} variant="confirmation" onOpenChange={setConfirmClose}>
         <Prompt.Content>
           <Prompt.Header>
-            <Prompt.Title>Unsaved changes</Prompt.Title>
+            <Prompt.Title>
+              Are you sure you want to leave this form?
+            </Prompt.Title>
             <Prompt.Description>
-              You have unsaved changes. Are you sure you want to discard them?
+              You have unsaved changes that will be lost if you exit this form.
             </Prompt.Description>
           </Prompt.Header>
           <Prompt.Footer>
@@ -180,7 +182,7 @@ const PromotionRulesWidget = ({ data }: DetailWidgetProps<AdminPromotion>) => {
               Cancel
             </Prompt.Cancel>
             <Prompt.Action onClick={handleConfirmedClose}>
-              Discard
+              Continue
             </Prompt.Action>
           </Prompt.Footer>
         </Prompt.Content>
@@ -236,9 +238,11 @@ const PromotionRulesWidget = ({ data }: DetailWidgetProps<AdminPromotion>) => {
       <Prompt open={modeConfirmClose} variant="confirmation" onOpenChange={setModeConfirmClose}>
         <Prompt.Content>
           <Prompt.Header>
-            <Prompt.Title>Unsaved changes</Prompt.Title>
+            <Prompt.Title>
+              Are you sure you want to leave this form?
+            </Prompt.Title>
             <Prompt.Description>
-              You have unsaved changes. Are you sure you want to discard them?
+              You have unsaved changes that will be lost if you exit this form.
             </Prompt.Description>
           </Prompt.Header>
           <Prompt.Footer>
@@ -246,7 +250,7 @@ const PromotionRulesWidget = ({ data }: DetailWidgetProps<AdminPromotion>) => {
               Cancel
             </Prompt.Cancel>
             <Prompt.Action onClick={handleModeConfirmedClose}>
-              Discard
+              Continue
             </Prompt.Action>
           </Prompt.Footer>
         </Prompt.Content>

@@ -166,15 +166,28 @@ After this fix:
    within Medusa's own pass — BUT computed without knowledge of non-standard adjustments)
 3. restoredAdjustments = evicted standard promos restored by restoreEvictedStandardPromos
 
-Before writing finalAdjustments, apply a per-item cap:
-  For each item:
-    totalAdjustments = sum of all adjustments on this item (custom + preserved + restored)
-    if totalAdjustments > item.subtotal:
-      scale down preserved + restored adjustments proportionally to fit within
-      (item.subtotal - customAdjustments) remaining budget
+Before writing finalAdjustments, two corrections are applied:
+
+a. Scale percentage-type standard adjustments to post-bundle remaining:
+   Medusa computed percentage discounts on original item subtotals.
+   When a bundle reduces the effective price, percentage promos must
+   be recomputed on the reduced base. For each percentage-type standard
+   adjustment on an item with bundle discounts:
+     scale = (item_subtotal - bundle_discount_on_same_basis) / item_subtotal
+     new_amount = original_amount * scale
+   Fixed-type standard adjustments are left unchanged (they are flat
+   amounts, not proportional to the base).
+   The promotion's application_method.type is queried to distinguish
+   percentage from fixed. Tax-basis conversion is applied when the
+   bundle's is_tax_inclusive differs from the standard promo's.
+
+b. Budget cap (safety net):
+   capAdjustmentsToSubtotal ensures the total of all adjustments
+   per item never exceeds the item subtotal. This prevents negative
+   totals even after scaling.
 ```
 
-This per-item cap is the safety net that prevents negative totals even when the three adjustment sources (native, custom, restored) were computed independently.
+Together, (a) ensures percentage standard promos compute on the correct post-bundle base (matching PRD Examples C and E), and (b) ensures the total never goes negative.
 
 #### Concrete Examples
 
@@ -403,6 +416,16 @@ This also caused the false Bug 5 report — a reporter saw promos linked with `d
 
 This ensures promos whose target_rules don't match the cart's items never get linked. Promos that genuinely were evicted by budget contamination (their items DO match but budget was consumed) will produce adjustments in the clean-context computation and will be correctly restored.
 
+**Second code path — `evaluateAutoApplyPromotions`:**
+
+Testing revealed the same phantom-link bug in `evaluateAutoApplyPromotions` (`src/lib/evaluate-auto-apply-promotions.ts`). This function checks activation rules (`passesNativeRules`) and ext rules (`evaluatePromotion`) but did NOT check `application_method.target_rules` before linking. Any active auto-apply promo that passed activation/ext rules would get linked to the cart even if no items matched its target_rules.
+
+Fix applied:
+1. Added `application_method.target_rules` to the promotion query.
+2. Added `items.product.categories.id`, `items.product.type_id`, `items.product.tags.id` to the cart query.
+3. After ext rules pass, call `filterEligibleItems(cartItems, targetRules)` — only link if at least one cart item matches.
+4. If a promo is already linked but no items match anymore (e.g., matching item was removed from cart), it gets unlinked.
+
 ---
 
 ### Entry 4: Duplicate Adjustment ID Error
@@ -476,6 +499,169 @@ The only change: the Zod validation in `src/api/admin/promotion-ext-configs/vali
 
 ---
 
+### Entry 8: Standard Auto-Apply Promos Get No Adjustments on First Link (Regression from Entry 2)
+
+**Type:** Bug (regression introduced by Entry 2 refactor)
+**Severity:** Medium — standard auto-apply promotions linked with `discount_total=0` on first cart mutation
+
+**Symptom:** When adding an item to a fresh cart, standard auto-apply promotions get linked to the cart but produce no adjustments (`discount_total=0`, `adjustments=[]`). The promotion appears in `cart.promotions` correctly, but the discount is missing. On the next cart mutation (add another item, change quantity), the discount appears correctly. A page refresh after the second mutation shows the correct total.
+
+Example: "10off" (standard, auto_apply=ON, fixed 10€ off, targets "Medusa Sweatpants") gets linked when adding Sweatpants to an empty cart. The POST response shows `discount_total: 0`. Adding a second item triggers `updateCartPromotionsWorkflow(REPLACE)` which now sees the linked promo and computes the 10€ adjustment.
+
+**Root cause:** The Entry 2 refactor moved `evaluateAutoApplyPromotions` into the `beforeRefreshingPaymentCollection` hook, which fires AFTER `updateCartPromotionsWorkflow(REPLACE)` has already computed native adjustments. The timing:
+
+1. `updateCartPromotionsWorkflow(REPLACE)` runs — computes native adjustments for **currently linked** promos. On a fresh cart, no promos are linked → nothing computed.
+2. Hook fires → `evaluateAutoApplyPromotions` finds eligible promos, links them via `remoteLink.create`.
+3. Hook continues → `computeNonStandardAdjustments` runs. For non-standard promos (bundle, buyget_repeat), adjustments are computed directly. But for standard promos, adjustments come from Medusa's native `computeActions` — which already ran in step 1 when the promo wasn't linked yet.
+4. `restoreEvictedStandardPromos` skips the freshly-linked promos because they ARE linked (`if (linkedPromoIds.has(promotion.id)) continue`) — the function was designed to restore promos that are NOT linked.
+
+Before Entry 2, `evaluateAutoApplyPromotions` called `updateCartPromotionsWorkflow(ADD)` which triggered `computeActions` for all linked promos including newly-added ones. The switch to direct `remoteLink.create` eliminated that computation step.
+
+**Why this wasn't caught earlier:** The bug self-heals on the next cart mutation. Step 1 of the next `refreshCartItemsWorkflow` sees the promo already linked and computes its adjustments. The `cart.updated` subscriber also eventually runs, but it had the same gap (addressed in the fix).
+
+**Designed fix:** Thread newly-linked promo codes from `evaluateAutoApplyPromotions` through to `restoreEvictedStandardPromos` so it computes their adjustments via `computeActions`:
+
+1. The hook captures `added` codes from `evaluateAutoApplyPromotions` and passes them as `freshlyLinkedCodes` to `computeNonStandardAdjustments`.
+2. `computeNonStandardAdjustments` threads `freshlyLinkedCodes` through to `applyExtAdjustmentsToCart` → `restoreEvictedStandardPromos`. Early returns at both levels are updated to not bail when `freshlyLinkedCodes` is present.
+3. `restoreEvictedStandardPromos` accepts an optional `freshlyLinkedCodes: Set<string>`. For promos whose code is in this set: (a) don't skip even though they're linked, (b) compute adjustments via `computeActions` as usual, (c) skip `remoteLink.create` since they're already linked.
+4. The same fix is applied to the `cart.updated` subscriber fallback path.
+
+All parameter additions are optional — backward compatible with existing call sites.
+
+---
+
+### Entry 9: Rounding Loss in Budget Cap When Non-Standard + Standard Adjustments Combine
+
+**Type:** Bug
+**Severity:** Low–Medium — customer is undercharged by small amounts (typically 1–3 currency units per item)
+
+**Symptom:** When a non-standard promotion (bundle, buyget_repeat) and multiple standard promotions (fixed, percentage) apply to the same item and the combined standard discounts exceed the remaining budget after the non-standard discount, the cart total is slightly higher than it should be. The customer pays a small amount they shouldn't.
+
+Example: Item costs 100€. Bundle promo sets target price 70€ (30€ off). Three standard promotions: 35€ off, 33€ off, 33€ off. Expected: total discount = 100€, cart = 0€. Actual (before fix): total discount = 99€, cart = 1€.
+
+**Root cause:** `capAdjustmentsToSubtotal` in `adjustment-calculator.ts` used **proportional scaling** with `Math.floor` to fit standard adjustments into the remaining budget after non-standard adjustments. Each adjustment was independently scaled and floored, accumulating rounding losses.
+
+The three adjustment sources are computed independently:
+1. Non-standard adjustments (priority) — computed by the plugin from original prices
+2. Preserved native adjustments — computed by Medusa's `computeActions`, which doesn't know about #1
+3. Restored standard adjustments — computed by `restoreEvictedStandardPromos` in a clean context, also unaware of #1
+
+When #2 and #3 exceed the remaining budget after #1, `capAdjustmentsToSubtotal` must scale them down. The old algorithm: `scale = remaining / otherTotal`, then `Math.floor(adj.amount * scale)` for each adjustment. With the example above:
+
+- Remaining after bundle: 70€
+- Standard adjustments from Medusa: 35 + 33 + 32 = 100€ (Medusa capped the last one at 32 in its own pass)
+- Scale: 70/100 = 0.7
+- `floor(35 × 0.7)` = `floor(24.5)` = 24
+- `floor(33 × 0.7)` = `floor(23.1)` = 23
+- `floor(32 × 0.7)` = `floor(22.4)` = 22
+- Total: 24 + 23 + 22 = 69 instead of 70. Lost 1€.
+
+**Why this only happens with non-standard + standard combinations:** Medusa's native `computeActions` already does sequential capping for standard-only promotions (sort by value DESC, apply each capped at remaining). When only standard promotions are on the cart, Medusa handles them correctly — the plugin's `capAdjustmentsToSubtotal` is not triggered because the standard adjustments never exceed the item subtotal. The bug only manifests when non-standard adjustments consume part of the budget, making the independently-computed standard adjustments exceed the remaining budget.
+
+**Designed fix:** Replace proportional scaling with **sequential capping** — the same algorithm Medusa uses natively:
+
+1. Compute remaining budget per item: `subtotal - priorityTotal` (non-standard adjustments always applied in full).
+2. Sort other adjustments (preserved + restored) by amount DESC.
+3. For each adjustment: `cappedAmount = min(amount, remaining)`, then `remaining -= cappedAmount`.
+
+No `Math.floor`, no proportional scaling, no rounding loss. The highest-value adjustment gets applied first and in full (or capped at remaining). The last adjustment absorbs any budget shortfall — identical to Medusa's native behavior.
+
+With the fix applied to the example above:
+- Bundle: 30€, remaining = 70€
+- 35off: min(35, 70) = 35, remaining = 35
+- 33Offf: min(33, 35) = 33, remaining = 2
+- 33off2: min(32, 2) = 2, remaining = 0
+- Total: 30 + 35 + 33 + 2 = 100€. Cart = 0€. Exact.
+
+---
+
+### Entry 10: Adjustment Calculators Use Wrong Price Basis and Round Down
+
+**Type:** Bug
+**Severity:** High — causes negative cart totals with percentage promotions on tax-inclusive items, and loses discount amounts with non-integer prices
+
+**Symptom:** Three manifestations:
+
+1. **Negative cart total with percentage promotions:** A buy-1-get-1-free promotion (100% percentage off) on a 7.50€ tax-inclusive item produces adjustment `amount: 7.50` with `is_tax_inclusive: false`. Medusa treats 7.50 as tax-exclusive and adds 18% tax on top → `discount_total: 8.85` → cart total: **-1.35€**. Vanilla Medusa produces `amount: 6.3559` (tax-exclusive) → `discount_total: 7.50` → cart total: **0€**.
+
+2. **Bundle discount shortfall with tax-inclusive target price:** A "2 for 5€" bundle (tax-inclusive) on items totaling 17.50€ produces savings of 9.83 instead of 12.50. Cart total: 7.67€ instead of 5€. The calculator subtracted a tax-inclusive bundle price (5) from a tax-exclusive group total (14.83) — mixing units.
+
+3. **Math.floor rounding loss:** `computeBuyGetRepeat` used `Math.floor(unit_price * percentage)`, losing up to ~1€ per adjustment on non-integer prices (e.g., 7.50€ item at 100% off → `floor(7.5)` = 7 instead of 7.5). `computeBundle` and `spreadCartAdjustment` had the same `Math.floor` pattern.
+
+**Root cause:** The adjustment calculators were written assuming:
+- Amounts are in minor currency units (cents/agorot) where `Math.floor` loses at most 1 cent
+- Tax doesn't affect the calculation because amounts are always integers
+
+Both assumptions are wrong when the store uses major currency units (€/₪) with tax-inclusive pricing. Three code locations affected:
+
+| Location | Old behavior | Problem |
+|---|---|---|
+| `computeBuyGetRepeat` line 142 | `Math.floor(item.unit_price * (discountValue / 100))` | Uses tax-inclusive `unit_price` + floors result |
+| `computeBundle` line 84 | `Math.floor(groupSavings * (item.unit_price / groupOriginal))` | Uses tax-inclusive prices for proportional split + floors result |
+| `spreadCartAdjustment` line 22 | `Math.floor(effectiveAmount * (items[i].subtotal / cartSubtotal))` | Floors proportional share, skewing per-item distribution |
+
+Additionally, `restoreEvictedStandardPromos` built its clean context for `computeActions` with `subtotal: unitPrice * qty` (tax-inclusive). Medusa's `computeActions` expects tax-exclusive subtotal. This caused percentage promotions restored via this path to produce adjustments based on the wrong (inflated) base amount.
+
+**How Medusa handles percentage promotions (verified from source):**
+
+Medusa's `calculateAdjustmentAmountFromPromotion` uses `item.subtotal` (tax-exclusive) when `is_tax_inclusive: false`, and `item.original_total` (tax-inclusive) when `is_tax_inclusive: true`. For percentage promotions, the admin UI hides the `is_tax_inclusive` field and defaults to `false`. Therefore percentage discounts are always computed on the tax-exclusive base.
+
+For fixed/bundle promotions, `is_tax_inclusive` determines whether the value includes tax. A bundle "2 for 5€" with `is_tax_inclusive: true` means the 5€ target price includes tax → savings must be computed against tax-inclusive original prices.
+
+**Designed fix:**
+
+1. **Add `subtotal` field to `EligibleItem` interface** — carries the tax-exclusive subtotal (computed as `unit_price / (1 + taxRate/100) * qty`) alongside the tax-inclusive `unit_price`.
+
+2. **Pass `is_tax_inclusive` to calculator functions** via the `applicationMethod` parameter. Added to both `BundleApplicationMethod` and `BuyGetRepeatApplicationMethod` interfaces.
+
+3. **Calculator functions pick the correct price basis per context:**
+   - `computeBuyGetRepeat` percentage: always tax-exclusive `unit_subtotal` (matches Medusa native)
+   - `computeBuyGetRepeat` fixed: `unit_price` when `is_tax_inclusive: true`, `unit_subtotal` when `false`
+   - `computeBundle`: `unit_price` when `is_tax_inclusive: true`, `unit_subtotal` when `false` (both sides of `groupOriginal - bundlePrice` use the same tax basis)
+
+4. **Remove all `Math.floor` calls on monetary amounts:**
+   - `computeBuyGetRepeat`: direct multiplication, no floor
+   - `computeBundle`: proportional share without floor (remainder correction on last item preserves total)
+   - `spreadCartAdjustment`: proportional share without floor (remainder correction on last item preserves total)
+
+5. **Fetch tax lines in cart query** (`compute-non-standard-adjustments.ts`): replaced `items.subtotal` (unreliable — returns post-discount values) with `items.is_tax_inclusive` + `items.tax_lines.rate`, computing tax-exclusive subtotal as `unit_price / (1 + taxRate/100) * qty`.
+
+6. **Fix `restoreEvictedStandardPromos` clean context:** compute tax-exclusive subtotal from `unit_price` and tax lines instead of using `unit_price * qty` as the subtotal fallback.
+
+### Entry 11: Admin Route Handlers Drop `is_tax_inclusive` When Writing Line Item Adjustments
+
+**Type:** Bug
+**Severity:** High — manual adjustments with `is_tax_inclusive: true` produce incorrect cart totals in tax-inclusive regions
+
+**Symptom:** A manual cart-wide adjustment of 10€ with `is_tax_inclusive: true` produces a cart total of 5.70€ instead of the expected 7.50€. The ext adjustment record stores `is_tax_inclusive: true` correctly, but the resulting Medusa line item adjustments show `is_tax_inclusive: false`. Medusa treats the 10€ discount as tax-exclusive and adds 18% VAT on top → `discount_total: 11.80€` instead of 10€.
+
+**Root cause:** The admin CRUD route handlers in `src/api/admin/cart-adjustments/` write line item adjustments directly via `cartModule.addLineItemAdjustments` (POST) and `cartModule.setLineItemAdjustments` (PATCH/DELETE), but omit `is_tax_inclusive` (and `metadata`) from the adjustment objects. Medusa's `LineItemAdjustment` model defaults `is_tax_inclusive` to `false` when not provided.
+
+This is distinct from the ADR-0008 fix (which corrected the same omission in `applyExtAdjustmentsToCart` for engine-computed bundle/buyget adjustments). The admin route handlers bypass `applyExtAdjustmentsToCart` entirely — they write line item adjustments inline immediately after creating/updating the ext adjustment record. The ADR-0008 fix never touched these routes.
+
+Six code locations affected across three files:
+
+| File | Handler | What was missing |
+|---|---|---|
+| `[cart_id]/route.ts` | POST (item-specific) | `is_tax_inclusive` on `addLineItemAdjustments` |
+| `[cart_id]/route.ts` | POST (cart-wide spread) | `is_tax_inclusive` on `addLineItemAdjustments` |
+| `[cart_id]/[id]/route.ts` | PATCH | `is_tax_inclusive`, `metadata` on both preserved and updated adjustments |
+| `[cart_id]/[id]/route.ts` | DELETE | `is_tax_inclusive`, `metadata` on preserved adjustments |
+| `[cart_id]/batch/route.ts` | PATCH | `is_tax_inclusive`, `metadata` on both preserved and updated adjustments |
+| `[cart_id]/batch/route.ts` | DELETE | `is_tax_inclusive`, `metadata` on preserved adjustments |
+
+**Designed fix:**
+
+1. **POST handler** — read `is_tax_inclusive` from the validated body (already present in the Zod schema) and forward it to both `addLineItemAdjustments` call sites (item-specific and cart-wide spread).
+
+2. **PATCH handlers** — fetch `is_tax_inclusive` from the existing ext adjustment record (added to the `fields` array in the query). Forward it to the updated adjustment object, and forward each preserved adjustment's `is_tax_inclusive` and `metadata` when re-emitting via `setLineItemAdjustments`.
+
+3. **DELETE handlers** — forward `is_tax_inclusive` and `metadata` from each preserved adjustment when re-emitting via `setLineItemAdjustments`.
+
+4. **Type cast** — Medusa's `UpsertLineItemAdjustmentDTO` type omits `is_tax_inclusive` and `metadata` despite the underlying model and DB column supporting them. Used `as any` cast on the adjustment arrays (same approach as the existing `capAdjustmentsToSubtotal` path which avoids the issue via index signature typing).
+
+---
+
 ## User Stories
 
 1. As a customer, I want only the best promotion to apply to each item in my cart, so that my cart total never goes negative from stacked discounts.
@@ -488,6 +674,10 @@ The only change: the Zod validation in `src/api/admin/promotion-ext-configs/vali
 8. As a merchant, I want the API to never return duplicate adjustment errors when customers add items to their cart, so that the storefront doesn't show error states.
 9. As a developer, I want all promotion computation to happen inside the workflow's distributed lock, so that concurrent cart mutations cannot interleave and produce inconsistent state.
 10. As a developer, I want `restoreEvictedStandardPromos` to only link promotions that produce adjustments, so that phantom promotion links don't accumulate on carts.
+11. As a customer, I want standard auto-apply promotions to produce discounts immediately when my first item is added to the cart, not only after a second mutation.
+12. As a customer, I want the full discount applied when non-standard and standard promotions combine, without small amounts lost to rounding.
+13. As a customer, I want percentage promotions on tax-inclusive items to produce correct discounts (not negative totals), matching Medusa's native tax-aware calculation.
+14. As a merchant, I want bundle target prices to respect the `is_tax_inclusive` flag so that "2 for 5€ tax-inclusive" means the customer pays exactly 5€.
 
 ---
 
@@ -573,6 +763,9 @@ Existing test files follow the pattern of mocking the Medusa container (`contain
 2. **Entry 7** (bundle_size validation) — one-line change, unblocks 19 promotions.
 3. **Entry 2** (move logic into hook) — architectural refactor that fixes the race condition, duplicate ID errors (Entry 4), and duplicate adjustments (Entry 6). Should be done before Entry 1 because it changes where the resolution logic runs.
 4. **Entry 1** (two-phase resolution) — builds on the Entry 2 refactor. The greedy algorithm and budget cap are implemented in the same code path that Entry 2 consolidates into the hook.
+5. **Entry 8** (freshly-linked standard promo adjustments) — fixes a regression introduced by Entry 2. Must be implemented after Entry 2.
+6. **Entry 9** (budget cap rounding fix) — replaces proportional scaling with sequential capping in `capAdjustmentsToSubtotal`. Must be implemented after Entry 1 (which introduced the function).
+7. **Entry 10** (calculator tax basis + Math.floor fix) — switches calculators to tax-aware price basis and removes Math.floor. Must be implemented after Entry 9 (same files).
 
 ### Relationship between entries
 
@@ -585,6 +778,9 @@ Existing test files follow the pattern of mocking the Medusa container (`contain
 | 5 | False report | Entry 3 | N/A — not a real bug |
 | 6 | Bug (Entry 1 + Entry 2) | Entry 1, Entry 2 | Bundle duplication during rapid adds |
 | 7 | Feature request | None | Target price per item (19 promotions) |
+| 8 | Bug (regression from Entry 2) | Entry 2 | Standard auto-apply promos get no adjustments on first link |
+| 9 | Bug | Entry 1 | Rounding loss when non-standard + standard adjustments combine |
+| 10 | Bug | None | Wrong tax basis + Math.floor in calculators, negative totals with percentage promos |
 
 ### Reference files
 

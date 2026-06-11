@@ -1,27 +1,15 @@
-import { ContainerRegistrationKeys, Modules, PromotionActions } from "@medusajs/framework/utils"
-import { updateCartPromotionsWorkflow } from "@medusajs/medusa/core-flows"
+import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils"
 import { PROMOTION_EXT_MODULE } from "../modules/promotion-ext"
 import type PromotionExtModuleService from "../modules/promotion-ext/service"
 import { spreadCartAdjustment } from "./adjustment-spread"
-import { computeBundle, computeBuyGetRepeat } from "./adjustment-calculator"
+import { computeBundle, computeBuyGetRepeat, resolveExclusiveNonStandard, capAdjustmentsToSubtotal, type PromotionAdjustmentGroup } from "./adjustment-calculator"
 import { filterEligibleItems, type CartItemForTargetRules } from "./target-rule-evaluator"
 import { restoreEvictedStandardPromos } from "./restore-evicted-standard-promos"
-
-const applyLocks = new Map<string, Promise<void>>()
-
-function withApplyLock(cartId: string, fn: () => Promise<void>): Promise<void> {
-  const chain = (applyLocks.get(cartId) ?? Promise.resolve()).then(fn, fn)
-  applyLocks.set(cartId, chain)
-  chain.finally(() => {
-    if (applyLocks.get(cartId) === chain) applyLocks.delete(cartId)
-  })
-  return chain
-}
 
 export async function computeNonStandardAdjustments(
   cartId: string,
   container: any,
-  options?: { appliedPromotionCodes?: string[]; insideHook?: boolean }
+  options?: { appliedPromotionCodes?: string[]; freshlyLinkedCodes?: string[] }
 ): Promise<void> {
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
   const service: PromotionExtModuleService = container.resolve(PROMOTION_EXT_MODULE)
@@ -31,7 +19,7 @@ export async function computeNonStandardAdjustments(
     (c: any) => c.promotion_mode && c.promotion_mode !== "standard"
   )
 
-  if (!nonStandardConfigs.length) return
+  if (!nonStandardConfigs.length && !options?.freshlyLinkedCodes?.length) return
 
   const appliedCodes = await resolveAppliedCodes(cartId, query, options?.appliedPromotionCodes)
 
@@ -56,6 +44,8 @@ export async function computeNonStandardAdjustments(
     fields: [
       "items.id",
       "items.unit_price",
+      "items.is_tax_inclusive",
+      "items.tax_lines.rate",
       "items.quantity",
       "items.product_id",
       "items.product.collection_id",
@@ -71,6 +61,8 @@ export async function computeNonStandardAdjustments(
     product_id: item.product_id,
     product: item.product ?? {},
   }))
+
+  const allComputedGroups: (PromotionAdjustmentGroup & { code: string; mode: string; is_tax_inclusive: boolean })[] = []
 
   for (const cfg of nonStandardConfigs) {
     const promo = appliedPromos.find((p: any) => p.id === (cfg as any).promotion_id)
@@ -98,10 +90,16 @@ export async function computeNonStandardAdjustments(
 
     const eligibleWithPrices = eligibleItems.map((ei) => {
       const cartItem = (cartWithProducts[0]?.items ?? []).find((i: any) => i.id === ei.id)
+      const unitPrice = typeof cartItem?.unit_price === "number" ? cartItem.unit_price : Number(cartItem?.unit_price ?? 0)
+      const qty = typeof cartItem?.quantity === "number" ? cartItem.quantity : Number(cartItem?.quantity ?? 0)
+      const isTaxInclusive = cartItem?.is_tax_inclusive ?? false
+      const taxRate = (cartItem?.tax_lines ?? []).reduce((sum: number, tl: any) => sum + (Number(tl.rate) || 0), 0)
+      const unitSubtotal = isTaxInclusive && taxRate > 0 ? unitPrice / (1 + taxRate / 100) : unitPrice
       return {
         id: ei.id,
-        unit_price: typeof cartItem?.unit_price === "number" ? cartItem.unit_price : Number(cartItem?.unit_price ?? 0),
-        quantity: typeof cartItem?.quantity === "number" ? cartItem.quantity : Number(cartItem?.quantity ?? 0),
+        unit_price: unitPrice,
+        subtotal: unitSubtotal * qty,
+        quantity: qty,
       }
     })
 
@@ -109,53 +107,69 @@ export async function computeNonStandardAdjustments(
     const promotionMode = (cfg as any).promotion_mode as string
     const am = (promo as any).application_method
 
-    let computedGroup: { promotion_id: string; adjustments: { item_id: string; amount: number }[] }
+    let computedGroup: PromotionAdjustmentGroup
 
     if (promotionMode === "bundle") {
       computedGroup = computeBundle((cfg as any).promotion_id, eligibleWithPrices, modeConfig, {
         value: typeof am?.value === "number" ? am.value : Number(am?.value ?? 0),
         max_quantity: am?.max_quantity ?? null,
+        is_tax_inclusive: (promo as any).is_tax_inclusive ?? false,
       })
     } else if (promotionMode === "buyget_repeat") {
       computedGroup = computeBuyGetRepeat((cfg as any).promotion_id, eligibleWithPrices, modeConfig, {
         type: am?.type === "percentage" ? "percentage" : "fixed",
         value: typeof am?.value === "number" ? am.value : Number(am?.value ?? 0),
         max_quantity: am?.max_quantity ?? null,
+        is_tax_inclusive: (promo as any).is_tax_inclusive ?? false,
       })
     } else {
       continue
     }
 
+    allComputedGroups.push({
+      ...computedGroup,
+      code: promo.code,
+      mode: promotionMode,
+      is_tax_inclusive: (promo as any).is_tax_inclusive ?? false,
+    })
+  }
+
+  const winners = resolveExclusiveNonStandard(allComputedGroups)
+  const winnerIds = new Set(winners.map((w) => w.promotion_id))
+
+  for (const group of allComputedGroups) {
     const oldRows = await service.listCartExtAdjustments({
       cart_id: cartId,
-      promotion_id: (cfg as any).promotion_id,
-      source: promotionMode,
+      promotion_id: group.promotion_id,
+      source: group.mode,
     })
     if (oldRows.length) {
       await service.deleteCartExtAdjustments(oldRows.map((r: any) => r.id))
     }
 
-    if (computedGroup.adjustments.length) {
+    if (winnerIds.has(group.promotion_id) && group.adjustments.length) {
       await service.createCartExtAdjustments(
-        computedGroup.adjustments.map((adj) => ({
+        group.adjustments.map((adj) => ({
           cart_id: cartId,
           item_id: adj.item_id,
           amount: adj.amount,
-          code: promo.code,
-          source: promotionMode,
-          promotion_id: (cfg as any).promotion_id,
-          description: `${promotionMode === "bundle" ? "Bundle" : "Buy-get repeat"} promotion: ${promo.code}`,
-          is_tax_inclusive: (promo as any).is_tax_inclusive ?? false,
+          code: group.code,
+          source: group.mode,
+          promotion_id: group.promotion_id,
+          description: `${group.mode === "bundle" ? "Bundle" : "Buy-get repeat"} promotion: ${group.code}`,
+          is_tax_inclusive: group.is_tax_inclusive,
         }))
       )
-    } else if (isApplied && !options?.insideHook) {
-      await updateCartPromotionsWorkflow(container).run({
-        input: { cart_id: cartId, promo_codes: [promo.code], action: PromotionActions.REMOVE },
+    } else {
+      const remoteLink = container.resolve(ContainerRegistrationKeys.LINK)
+      await remoteLink.dismiss({
+        [Modules.CART]: { cart_id: cartId },
+        [Modules.PROMOTION]: { promotion_id: group.promotion_id },
       })
     }
   }
 
-  await withApplyLock(cartId, () => applyExtAdjustmentsToCart(cartId, nonStandardConfigs, container))
+  await applyExtAdjustmentsToCart(cartId, nonStandardConfigs, container, options?.freshlyLinkedCodes)
 }
 
 async function resolveAppliedCodes(
@@ -176,7 +190,8 @@ async function resolveAppliedCodes(
 async function applyExtAdjustmentsToCart(
   cartId: string,
   nonStandardConfigs: any[],
-  container: any
+  container: any,
+  freshlyLinkedCodes?: string[]
 ): Promise<void> {
   const service: PromotionExtModuleService = container.resolve(PROMOTION_EXT_MODULE)
   const cartExtAdjustments = await service.listCartExtAdjustments({ cart_id: cartId })
@@ -184,10 +199,10 @@ async function applyExtAdjustmentsToCart(
   const hasCustomAdjustments = cartExtAdjustments.length > 0
   const hasCustomModePromos = customModePromoIds.size > 0
 
-  if (!hasCustomAdjustments && !hasCustomModePromos) return
+  if (!hasCustomAdjustments && !hasCustomModePromos && !freshlyLinkedCodes?.length) return
 
   const cartModule = container.resolve(Modules.CART)
-  const fullCart = await cartModule.retrieveCart(cartId, { relations: ["items.adjustments", "items"] })
+  const fullCart = await cartModule.retrieveCart(cartId, { relations: ["items.adjustments", "items", "items.tax_lines"] })
 
   const preservedAdjustments: { id: string; item_id: string; code: string; amount: number; is_tax_inclusive: boolean; description?: string; promotion_id?: string; provider_id?: string; metadata?: Record<string, unknown> }[] = []
   for (const item of (fullCart.items ?? [])) {
@@ -252,10 +267,111 @@ async function applyExtAdjustmentsToCart(
     }
   }
 
-  const restoredAdjustments = await restoreEvictedStandardPromos(cartId, customModePromoIds, container)
+  const restoredAdjustments = await restoreEvictedStandardPromos(cartId, customModePromoIds, container, {
+    freshlyLinkedCodes: freshlyLinkedCodes?.length ? new Set(freshlyLinkedCodes) : undefined,
+  })
 
-  const finalAdjustments = [...preservedAdjustments, ...customAdjustments, ...restoredAdjustments]
-  await cartModule.setLineItemAdjustments(cartId, finalAdjustments)
+  const itemSubtotals = new Map<string, number>()
+  const itemTaxExclSubtotals = new Map<string, number>()
+  for (const item of (fullCart.items ?? [])) {
+    const unitPrice = typeof item.unit_price === "number" ? item.unit_price : Number(item.unit_price ?? 0)
+    const qty = typeof item.quantity === "number" ? item.quantity : Number(item.quantity ?? 0)
+    const taxInclSubtotal = unitPrice * qty
+    itemSubtotals.set((item as any).id, taxInclSubtotal)
+
+    const isTaxInclusive = (item as any).is_tax_inclusive ?? false
+    const taxRate = ((item as any).tax_lines ?? []).reduce(
+      (sum: number, tl: any) => sum + (Number(tl.rate) || 0), 0
+    )
+    const taxExclSubtotal = isTaxInclusive && taxRate > 0
+      ? (unitPrice / (1 + taxRate / 100)) * qty
+      : taxInclSubtotal
+    itemTaxExclSubtotals.set((item as any).id, taxExclSubtotal)
+  }
+
+  const allStandardAdjs = [...preservedAdjustments, ...restoredAdjustments]
+  const scaledStandardAdjs = await scalePercentageAdjustmentsForBundleRemaining(
+    allStandardAdjs,
+    customAdjustments,
+    itemSubtotals,
+    itemTaxExclSubtotals,
+    container,
+  )
+
+  const cappedAdjustments = capAdjustmentsToSubtotal(
+    itemSubtotals,
+    customAdjustments,
+    scaledStandardAdjs
+  )
+
+  await cartModule.setLineItemAdjustments(cartId, cappedAdjustments)
+}
+
+async function scalePercentageAdjustmentsForBundleRemaining(
+  standardAdjs: { item_id: string; amount: number; is_tax_inclusive: boolean; promotion_id?: string; [key: string]: any }[],
+  customAdjustments: { item_id: string; amount: number; is_tax_inclusive: boolean }[],
+  itemTaxInclSubtotals: Map<string, number>,
+  itemTaxExclSubtotals: Map<string, number>,
+  container: any,
+): Promise<typeof standardAdjs> {
+  if (!standardAdjs.length || !customAdjustments.length) return standardAdjs
+
+  const standardPromoIds = new Set<string>()
+  for (const adj of standardAdjs) {
+    if (adj.promotion_id) standardPromoIds.add(adj.promotion_id)
+  }
+  if (!standardPromoIds.size) return standardAdjs
+
+  const query = container.resolve(ContainerRegistrationKeys.QUERY)
+  const { data: standardPromos } = await query.graph({
+    entity: "promotion",
+    fields: ["id", "application_method.type"],
+    filters: { id: [...standardPromoIds] },
+  })
+
+  const percentagePromoIds = new Set<string>(
+    standardPromos
+      .filter((p: any) => p.application_method?.type === "percentage")
+      .map((p: any) => p.id)
+  )
+  if (!percentagePromoIds.size) return standardAdjs
+
+  const customTaxInclByItem = new Map<string, number>()
+  const customTaxExclByItem = new Map<string, number>()
+  for (const adj of customAdjustments) {
+    if (adj.is_tax_inclusive) {
+      customTaxInclByItem.set(adj.item_id, (customTaxInclByItem.get(adj.item_id) ?? 0) + adj.amount)
+    } else {
+      customTaxExclByItem.set(adj.item_id, (customTaxExclByItem.get(adj.item_id) ?? 0) + adj.amount)
+    }
+  }
+
+  return standardAdjs.map((adj) => {
+    if (!adj.promotion_id || !percentagePromoIds.has(adj.promotion_id)) return adj
+
+    const taxInclSub = itemTaxInclSubtotals.get(adj.item_id) ?? 0
+    const taxExclSub = itemTaxExclSubtotals.get(adj.item_id) ?? 0
+    if (taxInclSub <= 0) return adj
+
+    const customTaxIncl = customTaxInclByItem.get(adj.item_id) ?? 0
+    const customTaxExcl = customTaxExclByItem.get(adj.item_id) ?? 0
+    if (customTaxIncl <= 0 && customTaxExcl <= 0) return adj
+
+    let totalCustomOnBasis: number
+    if (adj.is_tax_inclusive) {
+      const exclToInclRatio = taxExclSub > 0 ? taxInclSub / taxExclSub : 1
+      totalCustomOnBasis = customTaxIncl + customTaxExcl * exclToInclRatio
+    } else {
+      const inclToExclRatio = taxInclSub > 0 ? taxExclSub / taxInclSub : 1
+      totalCustomOnBasis = customTaxExcl + customTaxIncl * inclToExclRatio
+    }
+
+    const baseSubtotal = adj.is_tax_inclusive ? taxInclSub : taxExclSub
+    const remaining = Math.max(0, baseSubtotal - totalCustomOnBasis)
+    const scale = remaining / baseSubtotal
+
+    return { ...adj, amount: adj.amount * scale }
+  })
 }
 
 function deduplicateExtAdjustments(adjustments: any[]): any[] {

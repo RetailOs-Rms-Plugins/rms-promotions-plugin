@@ -3,63 +3,38 @@
  *
  * This function checks all promotion ext configs with `auto_apply: true`,
  * evaluates their rules (native + ext) against the current cart state,
- * and adds or removes promotions accordingly via updateCartPromotionsWorkflow.
+ * and adds or removes promotions accordingly via direct link manipulation
+ * (remoteLink.create / remoteLink.dismiss).
  *
  * ## Where this function is called
  *
- * 1. **Custom store route overrides** (synchronous, before response)
- *    The add/update/delete line-item routes call this AFTER the main
- *    workflow completes and releases its lock. This ensures the API
- *    response includes auto-applied promotions immediately.
+ * 1. **Workflow hook** (beforeRefreshingPaymentCollection)
+ *    Runs inside the distributed lock — no concurrent writers.
  *
  * 2. **cart.updated subscriber** (async fallback)
  *    As a safety net for any cart mutation path not covered by route
  *    overrides (e.g., shipping method changes, customer assignment).
  *
- * ## Important: Do NOT call this from a workflow hook
- *
- * This function calls updateCartPromotionsWorkflow via .run() (standalone
- * invocation). Standalone invocations attempt to acquire the cart lock.
- * If a parent workflow still holds the lock, this will deadlock.
- *
- * Medusa's lock-skip mechanism (StepResponse.skip() in acquireLockStep)
- * only applies to .runAsStep() calls (sub-workflow composition), NOT to
- * .run() calls. Hooks use .run(), so calling this from a workflow hook
- * deadlocks. See ADR-0002 for the full investigation.
+ * Uses direct link manipulation instead of updateCartPromotionsWorkflow
+ * to avoid deadlocking when called inside a workflow hook. The workflow
+ * calls .run() which tries to acquire the cart lock that the parent
+ * workflow already holds. Direct links bypass this. Same pattern as
+ * restoreEvictedStandardPromos (ADR-0009).
  */
 
-import { updateCartPromotionsWorkflow } from "@medusajs/medusa/core-flows"
-import { ContainerRegistrationKeys, PromotionActions } from "@medusajs/framework/utils"
+import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils"
 import { PROMOTION_EXT_MODULE } from "../modules/promotion-ext"
 import type PromotionExtModuleService from "../modules/promotion-ext/service"
 import { evaluatePromotion } from "./rule-evaluator"
 import { buildEnrichedCart, loadConfigShape, passesNativeRules } from "./cart-enricher"
+import { filterEligibleItems, type CartItemForTargetRules } from "./target-rule-evaluator"
 
 export interface AutoApplyResult {
   added: string[]
   removed: string[]
 }
 
-const autoApplyLocks = new Map<string, Promise<AutoApplyResult>>()
-
-function withAutoApplyLock(cartId: string, fn: () => Promise<AutoApplyResult>): Promise<AutoApplyResult> {
-  const noop: AutoApplyResult = { added: [], removed: [] }
-  const chain = (autoApplyLocks.get(cartId) ?? Promise.resolve(noop)).then(fn, fn)
-  autoApplyLocks.set(cartId, chain)
-  chain.finally(() => {
-    if (autoApplyLocks.get(cartId) === chain) autoApplyLocks.delete(cartId)
-  })
-  return chain
-}
-
-export function evaluateAutoApplyPromotions(
-  cartId: string,
-  container: any
-): Promise<AutoApplyResult> {
-  return withAutoApplyLock(cartId, () => evaluateAutoApplyPromotionsInner(cartId, container))
-}
-
-async function evaluateAutoApplyPromotionsInner(
+export async function evaluateAutoApplyPromotions(
   cartId: string,
   container: any
 ): Promise<AutoApplyResult> {
@@ -79,11 +54,16 @@ async function evaluateAutoApplyPromotionsInner(
       "sales_channel_id",
       "currency_code",
       "customer_id",
+      "items.id",
       "items.quantity",
       "items.product_id",
       "items.product.collection_id",
+      "items.product.categories.id",
+      "items.product.type_id",
+      "items.product.tags.id",
       "customer.id",
       "customer.groups.id",
+      "promotions.id",
       "promotions.code",
     ],
     filters: { id: cartId },
@@ -92,7 +72,16 @@ async function evaluateAutoApplyPromotionsInner(
   const cart = cartList[0]
   if (!cart) return { added: [], removed: [] }
 
-  const appliedCodes = new Set<string>((cart?.promotions ?? []).map((p: any) => p.code))
+  const linkedPromoIds = new Set<string>((cart.promotions ?? []).map((p: any) => p.id))
+  const linkedCodeToId = new Map<string, string>(
+    (cart.promotions ?? []).map((p: any) => [p.code, p.id])
+  )
+
+  const cartItems: CartItemForTargetRules[] = (cart.items ?? []).map((item: any) => ({
+    id: item.id,
+    product_id: item.product_id,
+    product: item.product ?? {},
+  }))
 
   const { data: promotions } = await query.graph({
     entity: "promotion",
@@ -105,13 +94,16 @@ async function evaluateAutoApplyPromotionsInner(
       "rules.attribute",
       "rules.operator",
       "rules.values.value",
+      "application_method.target_rules.attribute",
+      "application_method.target_rules.operator",
+      "application_method.target_rules.values.value",
     ],
     filters: { id: promotionIds },
   })
 
   const now = new Date()
-  const toAdd: string[] = []
-  const toRemove: string[] = []
+  const toAdd: { id: string; code: string }[] = []
+  const toRemove: { id: string; code: string }[] = []
 
   for (const promotion of promotions) {
     const configShape = await loadConfigShape(promotion.id, container)
@@ -124,34 +116,58 @@ async function evaluateAutoApplyPromotionsInner(
       passesNativeRules(promotion, cart)
 
     if (!isActive) {
-      toRemove.push(promotion.code)
+      if (linkedPromoIds.has(promotion.id)) {
+        toRemove.push({ id: promotion.id, code: promotion.code })
+      }
       continue
     }
 
     const enrichedCart = await buildEnrichedCart(cartId, promotion.id, configShape, container)
     const passes = evaluatePromotion(configShape, enrichedCart)
 
-    if (passes) {
-      toAdd.push(promotion.code)
-    } else {
-      toRemove.push(promotion.code)
+    if (!passes) {
+      if (linkedPromoIds.has(promotion.id)) {
+        toRemove.push({ id: promotion.id, code: promotion.code })
+      }
+      continue
+    }
+
+    const targetRules = ((promotion as any).application_method?.target_rules ?? []).map((r: any) => ({
+      attribute: r.attribute as string,
+      operator: r.operator as string,
+      values: (r.values ?? []).map((v: any) => v.value ?? v) as string[],
+    }))
+    const hasMatchingItems = targetRules.length === 0 || filterEligibleItems(cartItems, targetRules).length > 0
+
+    if (hasMatchingItems && !linkedPromoIds.has(promotion.id)) {
+      toAdd.push({ id: promotion.id, code: promotion.code })
+    } else if (!hasMatchingItems && linkedPromoIds.has(promotion.id)) {
+      toRemove.push({ id: promotion.id, code: promotion.code })
     }
   }
 
-  const actualToAdd = toAdd.filter((code) => !appliedCodes.has(code))
-  const actualToRemove = toRemove.filter((code) => appliedCodes.has(code))
+  const remoteLink = container.resolve(ContainerRegistrationKeys.LINK)
 
-  if (actualToAdd.length) {
-    await updateCartPromotionsWorkflow(container).run({
-      input: { cart_id: cartId, promo_codes: actualToAdd, action: PromotionActions.ADD },
-    })
+  if (toAdd.length) {
+    await remoteLink.create(
+      toAdd.map((p) => ({
+        [Modules.CART]: { cart_id: cartId },
+        [Modules.PROMOTION]: { promotion_id: p.id },
+      }))
+    )
   }
 
-  if (actualToRemove.length) {
-    await updateCartPromotionsWorkflow(container).run({
-      input: { cart_id: cartId, promo_codes: actualToRemove, action: PromotionActions.REMOVE },
-    })
+  if (toRemove.length) {
+    await remoteLink.dismiss(
+      toRemove.map((p) => ({
+        [Modules.CART]: { cart_id: cartId },
+        [Modules.PROMOTION]: { promotion_id: p.id },
+      }))
+    )
   }
 
-  return { added: actualToAdd, removed: actualToRemove }
+  return {
+    added: toAdd.map((p) => p.code),
+    removed: toRemove.map((p) => p.code),
+  }
 }
