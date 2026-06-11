@@ -166,15 +166,28 @@ After this fix:
    within Medusa's own pass — BUT computed without knowledge of non-standard adjustments)
 3. restoredAdjustments = evicted standard promos restored by restoreEvictedStandardPromos
 
-Before writing finalAdjustments, apply a per-item cap:
-  For each item:
-    totalAdjustments = sum of all adjustments on this item (custom + preserved + restored)
-    if totalAdjustments > item.subtotal:
-      scale down preserved + restored adjustments proportionally to fit within
-      (item.subtotal - customAdjustments) remaining budget
+Before writing finalAdjustments, two corrections are applied:
+
+a. Scale percentage-type standard adjustments to post-bundle remaining:
+   Medusa computed percentage discounts on original item subtotals.
+   When a bundle reduces the effective price, percentage promos must
+   be recomputed on the reduced base. For each percentage-type standard
+   adjustment on an item with bundle discounts:
+     scale = (item_subtotal - bundle_discount_on_same_basis) / item_subtotal
+     new_amount = original_amount * scale
+   Fixed-type standard adjustments are left unchanged (they are flat
+   amounts, not proportional to the base).
+   The promotion's application_method.type is queried to distinguish
+   percentage from fixed. Tax-basis conversion is applied when the
+   bundle's is_tax_inclusive differs from the standard promo's.
+
+b. Budget cap (safety net):
+   capAdjustmentsToSubtotal ensures the total of all adjustments
+   per item never exceeds the item subtotal. This prevents negative
+   totals even after scaling.
 ```
 
-This per-item cap is the safety net that prevents negative totals even when the three adjustment sources (native, custom, restored) were computed independently.
+Together, (a) ensures percentage standard promos compute on the correct post-bundle base (matching PRD Examples C and E), and (b) ensures the total never goes negative.
 
 #### Concrete Examples
 

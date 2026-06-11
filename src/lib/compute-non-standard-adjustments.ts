@@ -202,7 +202,7 @@ async function applyExtAdjustmentsToCart(
   if (!hasCustomAdjustments && !hasCustomModePromos && !freshlyLinkedCodes?.length) return
 
   const cartModule = container.resolve(Modules.CART)
-  const fullCart = await cartModule.retrieveCart(cartId, { relations: ["items.adjustments", "items"] })
+  const fullCart = await cartModule.retrieveCart(cartId, { relations: ["items.adjustments", "items", "items.tax_lines"] })
 
   const preservedAdjustments: { id: string; item_id: string; code: string; amount: number; is_tax_inclusive: boolean; description?: string; promotion_id?: string; provider_id?: string; metadata?: Record<string, unknown> }[] = []
   for (const item of (fullCart.items ?? [])) {
@@ -272,19 +272,106 @@ async function applyExtAdjustmentsToCart(
   })
 
   const itemSubtotals = new Map<string, number>()
+  const itemTaxExclSubtotals = new Map<string, number>()
   for (const item of (fullCart.items ?? [])) {
     const unitPrice = typeof item.unit_price === "number" ? item.unit_price : Number(item.unit_price ?? 0)
     const qty = typeof item.quantity === "number" ? item.quantity : Number(item.quantity ?? 0)
-    itemSubtotals.set((item as any).id, unitPrice * qty)
+    const taxInclSubtotal = unitPrice * qty
+    itemSubtotals.set((item as any).id, taxInclSubtotal)
+
+    const isTaxInclusive = (item as any).is_tax_inclusive ?? false
+    const taxRate = ((item as any).tax_lines ?? []).reduce(
+      (sum: number, tl: any) => sum + (Number(tl.rate) || 0), 0
+    )
+    const taxExclSubtotal = isTaxInclusive && taxRate > 0
+      ? (unitPrice / (1 + taxRate / 100)) * qty
+      : taxInclSubtotal
+    itemTaxExclSubtotals.set((item as any).id, taxExclSubtotal)
   }
+
+  const allStandardAdjs = [...preservedAdjustments, ...restoredAdjustments]
+  const scaledStandardAdjs = await scalePercentageAdjustmentsForBundleRemaining(
+    allStandardAdjs,
+    customAdjustments,
+    itemSubtotals,
+    itemTaxExclSubtotals,
+    container,
+  )
 
   const cappedAdjustments = capAdjustmentsToSubtotal(
     itemSubtotals,
     customAdjustments,
-    [...preservedAdjustments, ...restoredAdjustments]
+    scaledStandardAdjs
   )
 
   await cartModule.setLineItemAdjustments(cartId, cappedAdjustments)
+}
+
+async function scalePercentageAdjustmentsForBundleRemaining(
+  standardAdjs: { item_id: string; amount: number; is_tax_inclusive: boolean; promotion_id?: string; [key: string]: any }[],
+  customAdjustments: { item_id: string; amount: number; is_tax_inclusive: boolean }[],
+  itemTaxInclSubtotals: Map<string, number>,
+  itemTaxExclSubtotals: Map<string, number>,
+  container: any,
+): Promise<typeof standardAdjs> {
+  if (!standardAdjs.length || !customAdjustments.length) return standardAdjs
+
+  const standardPromoIds = new Set<string>()
+  for (const adj of standardAdjs) {
+    if (adj.promotion_id) standardPromoIds.add(adj.promotion_id)
+  }
+  if (!standardPromoIds.size) return standardAdjs
+
+  const query = container.resolve(ContainerRegistrationKeys.QUERY)
+  const { data: standardPromos } = await query.graph({
+    entity: "promotion",
+    fields: ["id", "application_method.type"],
+    filters: { id: [...standardPromoIds] },
+  })
+
+  const percentagePromoIds = new Set<string>(
+    standardPromos
+      .filter((p: any) => p.application_method?.type === "percentage")
+      .map((p: any) => p.id)
+  )
+  if (!percentagePromoIds.size) return standardAdjs
+
+  const customTaxInclByItem = new Map<string, number>()
+  const customTaxExclByItem = new Map<string, number>()
+  for (const adj of customAdjustments) {
+    if (adj.is_tax_inclusive) {
+      customTaxInclByItem.set(adj.item_id, (customTaxInclByItem.get(adj.item_id) ?? 0) + adj.amount)
+    } else {
+      customTaxExclByItem.set(adj.item_id, (customTaxExclByItem.get(adj.item_id) ?? 0) + adj.amount)
+    }
+  }
+
+  return standardAdjs.map((adj) => {
+    if (!adj.promotion_id || !percentagePromoIds.has(adj.promotion_id)) return adj
+
+    const taxInclSub = itemTaxInclSubtotals.get(adj.item_id) ?? 0
+    const taxExclSub = itemTaxExclSubtotals.get(adj.item_id) ?? 0
+    if (taxInclSub <= 0) return adj
+
+    const customTaxIncl = customTaxInclByItem.get(adj.item_id) ?? 0
+    const customTaxExcl = customTaxExclByItem.get(adj.item_id) ?? 0
+    if (customTaxIncl <= 0 && customTaxExcl <= 0) return adj
+
+    let totalCustomOnBasis: number
+    if (adj.is_tax_inclusive) {
+      const exclToInclRatio = taxExclSub > 0 ? taxInclSub / taxExclSub : 1
+      totalCustomOnBasis = customTaxIncl + customTaxExcl * exclToInclRatio
+    } else {
+      const inclToExclRatio = taxInclSub > 0 ? taxExclSub / taxInclSub : 1
+      totalCustomOnBasis = customTaxExcl + customTaxIncl * inclToExclRatio
+    }
+
+    const baseSubtotal = adj.is_tax_inclusive ? taxInclSub : taxExclSub
+    const remaining = Math.max(0, baseSubtotal - totalCustomOnBasis)
+    const scale = remaining / baseSubtotal
+
+    return { ...adj, amount: adj.amount * scale }
+  })
 }
 
 function deduplicateExtAdjustments(adjustments: any[]): any[] {
