@@ -416,6 +416,16 @@ This also caused the false Bug 5 report — a reporter saw promos linked with `d
 
 This ensures promos whose target_rules don't match the cart's items never get linked. Promos that genuinely were evicted by budget contamination (their items DO match but budget was consumed) will produce adjustments in the clean-context computation and will be correctly restored.
 
+**Second code path — `evaluateAutoApplyPromotions`:**
+
+Testing revealed the same phantom-link bug in `evaluateAutoApplyPromotions` (`src/lib/evaluate-auto-apply-promotions.ts`). This function checks activation rules (`passesNativeRules`) and ext rules (`evaluatePromotion`) but did NOT check `application_method.target_rules` before linking. Any active auto-apply promo that passed activation/ext rules would get linked to the cart even if no items matched its target_rules.
+
+Fix applied:
+1. Added `application_method.target_rules` to the promotion query.
+2. Added `items.product.categories.id`, `items.product.type_id`, `items.product.tags.id` to the cart query.
+3. After ext rules pass, call `filterEligibleItems(cartItems, targetRules)` — only link if at least one cart item matches.
+4. If a promo is already linked but no items match anymore (e.g., matching item was removed from cart), it gets unlinked.
+
 ---
 
 ### Entry 4: Duplicate Adjustment ID Error

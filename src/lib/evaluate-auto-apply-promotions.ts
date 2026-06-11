@@ -27,6 +27,7 @@ import { PROMOTION_EXT_MODULE } from "../modules/promotion-ext"
 import type PromotionExtModuleService from "../modules/promotion-ext/service"
 import { evaluatePromotion } from "./rule-evaluator"
 import { buildEnrichedCart, loadConfigShape, passesNativeRules } from "./cart-enricher"
+import { filterEligibleItems, type CartItemForTargetRules } from "./target-rule-evaluator"
 
 export interface AutoApplyResult {
   added: string[]
@@ -53,9 +54,13 @@ export async function evaluateAutoApplyPromotions(
       "sales_channel_id",
       "currency_code",
       "customer_id",
+      "items.id",
       "items.quantity",
       "items.product_id",
       "items.product.collection_id",
+      "items.product.categories.id",
+      "items.product.type_id",
+      "items.product.tags.id",
       "customer.id",
       "customer.groups.id",
       "promotions.id",
@@ -72,6 +77,12 @@ export async function evaluateAutoApplyPromotions(
     (cart.promotions ?? []).map((p: any) => [p.code, p.id])
   )
 
+  const cartItems: CartItemForTargetRules[] = (cart.items ?? []).map((item: any) => ({
+    id: item.id,
+    product_id: item.product_id,
+    product: item.product ?? {},
+  }))
+
   const { data: promotions } = await query.graph({
     entity: "promotion",
     fields: [
@@ -83,6 +94,9 @@ export async function evaluateAutoApplyPromotions(
       "rules.attribute",
       "rules.operator",
       "rules.values.value",
+      "application_method.target_rules.attribute",
+      "application_method.target_rules.operator",
+      "application_method.target_rules.values.value",
     ],
     filters: { id: promotionIds },
   })
@@ -111,9 +125,23 @@ export async function evaluateAutoApplyPromotions(
     const enrichedCart = await buildEnrichedCart(cartId, promotion.id, configShape, container)
     const passes = evaluatePromotion(configShape, enrichedCart)
 
-    if (passes && !linkedPromoIds.has(promotion.id)) {
+    if (!passes) {
+      if (linkedPromoIds.has(promotion.id)) {
+        toRemove.push({ id: promotion.id, code: promotion.code })
+      }
+      continue
+    }
+
+    const targetRules = ((promotion as any).application_method?.target_rules ?? []).map((r: any) => ({
+      attribute: r.attribute as string,
+      operator: r.operator as string,
+      values: (r.values ?? []).map((v: any) => v.value ?? v) as string[],
+    }))
+    const hasMatchingItems = targetRules.length === 0 || filterEligibleItems(cartItems, targetRules).length > 0
+
+    if (hasMatchingItems && !linkedPromoIds.has(promotion.id)) {
       toAdd.push({ id: promotion.id, code: promotion.code })
-    } else if (!passes && linkedPromoIds.has(promotion.id)) {
+    } else if (!hasMatchingItems && linkedPromoIds.has(promotion.id)) {
       toRemove.push({ id: promotion.id, code: promotion.code })
     }
   }
