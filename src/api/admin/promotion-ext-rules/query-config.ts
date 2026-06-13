@@ -3,6 +3,7 @@ export const defaultAdminPromotionExtRuleFields = [
   "rule_group_id",
   "rule_type",
   "config",
+  "metadata",
   "created_at",
   "updated_at",
   "deleted_at",

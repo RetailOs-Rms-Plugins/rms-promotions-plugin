@@ -86,6 +86,7 @@ export const AdminCreatePromotionExtRuleSchema = z
     rule_group_id: z.string().min(1, "rule_group_id is required"),
     rule_type: z.string().min(1, "rule_type is required"),
     config: z.record(z.string(), z.unknown()),
+    metadata: z.record(z.unknown()).nullish(),
   })
   .superRefine((data, ctx) => {
     if (data.rule_type === "comparison") {
@@ -112,6 +113,7 @@ export const AdminUpdatePromotionExtRuleSchema = z
   .object({
     rule_type: z.string().optional(),
     config: z.record(z.string(), z.unknown()).optional(),
+    metadata: z.record(z.unknown()).nullish(),
   })
   .superRefine((data, ctx) => {
     if (data.rule_type !== undefined && data.rule_type !== "comparison") {

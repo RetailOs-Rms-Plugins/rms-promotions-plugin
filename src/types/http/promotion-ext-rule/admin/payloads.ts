@@ -1,7 +1,10 @@
+import { MetadataType } from "@medusajs/framework/types"
+
 export interface AdminCreatePromotionExtRulePayload {
   rule_group_id: string
   rule_type: string
   config: Record<string, unknown>
+  metadata?: MetadataType
 }
 
 export interface AdminBatchCreatePromotionExtRulePayload {
@@ -11,6 +14,7 @@ export interface AdminBatchCreatePromotionExtRulePayload {
 export interface AdminUpdatePromotionExtRulePayload {
   rule_type?: string
   config?: Record<string, unknown>
+  metadata?: MetadataType
 }
 
 export interface AdminBatchUpdatePromotionExtRulePayload {

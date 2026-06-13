@@ -3,6 +3,7 @@ import {
   WorkflowData,
   WorkflowResponse,
 } from "@medusajs/framework/workflows-sdk"
+import { MetadataType } from "@medusajs/framework/types"
 import { updatePromotionExtRulesStep } from "./steps"
 
 type UpdatePromotionExtRulesWorkflowInput = {
@@ -10,6 +11,7 @@ type UpdatePromotionExtRulesWorkflowInput = {
     id: string
     rule_type?: string
     config?: Record<string, unknown>
+    metadata?: MetadataType
   }[]
 }
 
