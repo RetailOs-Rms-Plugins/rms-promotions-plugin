@@ -22,14 +22,14 @@ export const AdminCreateCartExtAdjustmentSchema = z.object({
   amount: z.number({ message: "amount is required" }),
   description: z.string().optional(),
   is_tax_inclusive: z.boolean().optional().default(false),
-  metadata: z.record(z.unknown()).nullish(),
+  metadata: z.record(z.string(), z.unknown()).nullish(),
 })
 
 export const AdminUpdateCartExtAdjustmentSchema = z.object({
   amount: z.number().optional(),
   description: z.string().nullable().optional(),
   is_tax_inclusive: z.boolean().optional(),
-  metadata: z.record(z.unknown()).nullish(),
+  metadata: z.record(z.string(), z.unknown()).nullish(),
 })
 
 export const AdminBatchCreateCartExtAdjustmentsSchema = z.object({
