@@ -16,9 +16,9 @@ type ApplicationMethod = {
 
 type FormValues = {
   promotion_mode: PromotionMode
-  bundle_size?: number
-  buy_quantity?: number
-  get_quantity?: number
+  bundle_size?: number | null
+  buy_quantity?: number | null
+  get_quantity?: number | null
 }
 
 function buildModeConfig(values: FormValues): ModeConfig {
@@ -198,7 +198,7 @@ export function PromotionModeForm({
                     placeholder="3"
                     {...field}
                     value={field.value ?? ""}
-                    onChange={(e) => field.onChange(e.target.value ? Number(e.target.value) : undefined)}
+                    onChange={(e) => field.onChange(e.target.value === "" ? null : Number(e.target.value))}
                   />
                 )}
               />
@@ -224,7 +224,7 @@ export function PromotionModeForm({
                       placeholder="2"
                       {...field}
                       value={field.value ?? ""}
-                      onChange={(e) => field.onChange(e.target.value ? Number(e.target.value) : undefined)}
+                      onChange={(e) => field.onChange(e.target.value === "" ? null : Number(e.target.value))}
                     />
                   )}
                 />
@@ -245,7 +245,7 @@ export function PromotionModeForm({
                       placeholder="1"
                       {...field}
                       value={field.value ?? ""}
-                      onChange={(e) => field.onChange(e.target.value ? Number(e.target.value) : undefined)}
+                      onChange={(e) => field.onChange(e.target.value === "" ? null : Number(e.target.value))}
                     />
                   )}
                 />
