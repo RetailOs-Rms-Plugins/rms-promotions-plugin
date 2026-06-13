@@ -507,13 +507,170 @@ describe("capAdjustmentsToSubtotal", () => {
     // remaining after priority: 20
     // sorted: std_large(25), std_small(10)
     // std_large: min(25, 20) = 20, remaining = 0
-    // std_small: min(10, 0) = 0
+    // std_small: min(10, 0) = 0 → filtered out (BF-012)
     const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, otherAdjustments)
     const large = result.find((a) => (a as any).code === "std_large")
     const small = result.find((a) => (a as any).code === "std_small")
     expect(large?.amount).toBe(20)
-    expect(small?.amount).toBe(0)
+    expect(small).toBeUndefined()
     const totalForX = result.filter((a) => a.item_id === "item_x").reduce((s, a) => s + a.amount, 0)
     expect(totalForX).toBe(50)
+  })
+
+  it("BF-012: filters out zero-amount adjustments when budget is fully consumed by priority", () => {
+    const itemSubtotals = new Map([["item_x", 1000]])
+    const priorityAdjustments = [{ item_id: "item_x", amount: 1000 }]
+    const otherAdjustments = [
+      { item_id: "item_x", amount: 500, code: "std_a" },
+      { item_id: "item_x", amount: 300, code: "std_b" },
+    ]
+    const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, otherAdjustments)
+    expect(result).toHaveLength(1)
+    expect(result[0].amount).toBe(1000)
+  })
+
+  it("BF-012: filters out zero-amount adjustments when earlier standards exhaust budget", () => {
+    const itemSubtotals = new Map([["item_x", 1750]])
+    const priorityAdjustments: { item_id: string; amount: number }[] = []
+    const otherAdjustments = [
+      { item_id: "item_x", amount: 1000, code: "33off1", promotion_id: "p1" },
+      { item_id: "item_x", amount: 750, code: "33off1", promotion_id: "p1" },
+      { item_id: "item_x", amount: 1000, code: "33off2", promotion_id: "p2" },
+      { item_id: "item_x", amount: 750, code: "33off2", promotion_id: "p2" },
+    ]
+    // sorted: 1000(p1), 1000(p2), 750(p1), 750(p2)
+    // 1000(p1): min(1000, 1750) = 1000, remaining = 750
+    // 1000(p2): min(1000, 750) = 750, remaining = 0
+    // 750(p1): min(750, 0) = 0 → filtered
+    // 750(p2): min(750, 0) = 0 → filtered
+    const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, otherAdjustments)
+    expect(result).toHaveLength(2)
+    const totalForX = result.reduce((s, a) => s + a.amount, 0)
+    expect(totalForX).toBe(1750)
+  })
+
+  it("BF-012: does not filter adjustments with positive amount after capping", () => {
+    const itemSubtotals = new Map([
+      ["item_a", 1000],
+      ["item_b", 750],
+    ])
+    const priorityAdjustments: { item_id: string; amount: number }[] = []
+    const otherAdjustments = [
+      { item_id: "item_a", amount: 1000, code: "33off1" },
+      { item_id: "item_b", amount: 750, code: "33off2" },
+    ]
+    const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, otherAdjustments)
+    expect(result).toHaveLength(2)
+    expect(result.find((a) => (a as any).code === "33off1")?.amount).toBe(1000)
+    expect(result.find((a) => (a as any).code === "33off2")?.amount).toBe(750)
+  })
+})
+
+// ─── BF-010: Tax basis + no Math.floor ─────────────────────────────────────
+
+describe("BF-010: computeBundle uses correct tax basis", () => {
+  const bundleConfig: BundleModeConfig = { bundle_size: 2, remainder: "full_price" }
+
+  it("uses tax-inclusive unit_price when is_tax_inclusive=true", () => {
+    // Items: tax-inclusive price 10, tax-exclusive subtotal 8.4746 (18% VAT)
+    const items = makeItems([
+      { id: "item_a", unit_price: 10, quantity: 1, subtotal: 8.4746 },
+      { id: "item_b", unit_price: 7.5, quantity: 1, subtotal: 6.3559 },
+    ])
+    // Bundle "2 for 5" tax-inclusive → uses unit_price (10 + 7.5 = 17.5), savings = 12.5
+    const result = computeBundle("promo_1", items, bundleConfig, { value: 5, is_tax_inclusive: true })
+    const total = result.adjustments.reduce((s, a) => s + a.amount, 0)
+    expect(total).toBeCloseTo(12.5, 4)
+  })
+
+  it("uses tax-exclusive subtotal when is_tax_inclusive=false", () => {
+    const items = makeItems([
+      { id: "item_a", unit_price: 10, quantity: 1, subtotal: 8.4746 },
+      { id: "item_b", unit_price: 7.5, quantity: 1, subtotal: 6.3559 },
+    ])
+    // Bundle "2 for 5" tax-exclusive → uses subtotal/qty (8.4746 + 6.3559 = 14.8305), savings = 9.8305
+    const result = computeBundle("promo_1", items, bundleConfig, { value: 5, is_tax_inclusive: false })
+    const total = result.adjustments.reduce((s, a) => s + a.amount, 0)
+    expect(total).toBeCloseTo(9.8305, 3)
+  })
+
+  it("does not floor — preserves non-integer amounts exactly", () => {
+    const items = makeItems([
+      { id: "item_a", unit_price: 7.5, quantity: 2, subtotal: 12.7118 },
+    ])
+    // bundle_size=2, value=5, tax-inclusive → uses unit_price
+    // group: 7.5 + 7.5 = 15, savings = 10
+    // each unit: 10 * (7.5/15) = 5.0 exactly (no floor needed)
+    const result = computeBundle("promo_1", items, bundleConfig, { value: 5, is_tax_inclusive: true })
+    const total = result.adjustments.reduce((s, a) => s + a.amount, 0)
+    expect(total).toBe(10)
+  })
+})
+
+describe("BF-010: computeBuyGetRepeat uses correct tax basis", () => {
+  const b2g1Config: BuyGetRepeatModeConfig = {
+    buy_quantity: 2,
+    get_quantity: 1,
+    discount_target: "cheapest",
+    remainder: "full_price",
+  }
+
+  it("percentage always uses tax-exclusive subtotal", () => {
+    // 7.50 tax-incl, 6.3559 tax-excl (18% VAT), qty=3
+    const items = makeItems([
+      { id: "item_a", unit_price: 7.5, quantity: 3, subtotal: 19.0678 },
+    ])
+    // buy 2 get 1 free (100%), cheapest = tax-exclusive unit = 6.3559
+    const result = computeBuyGetRepeat("promo_1", items, b2g1Config, { type: "percentage", value: 100 })
+    const total = result.adjustments.reduce((s, a) => s + a.amount, 0)
+    // subtotal/qty = 19.0678/3 = 6.3559
+    expect(total).toBeCloseTo(6.3559, 3)
+  })
+
+  it("percentage does NOT use tax-inclusive price (would cause negative total)", () => {
+    const items = makeItems([
+      { id: "item_a", unit_price: 7.5, quantity: 3, subtotal: 19.0678 },
+    ])
+    const result = computeBuyGetRepeat("promo_1", items, b2g1Config, { type: "percentage", value: 100 })
+    const total = result.adjustments.reduce((s, a) => s + a.amount, 0)
+    // Must be less than unit_price (7.5), not equal — tax-exclusive basis
+    expect(total).toBeLessThan(7.5)
+  })
+
+  it("fixed with is_tax_inclusive=true uses tax-inclusive unit_price", () => {
+    const items = makeItems([
+      { id: "item_a", unit_price: 10, quantity: 3, subtotal: 25.4237 },
+    ])
+    // fixed 5 off, tax-inclusive → uses unit_price (10), discount = min(5, 10) = 5
+    const result = computeBuyGetRepeat("promo_1", items, b2g1Config, {
+      type: "fixed", value: 5, is_tax_inclusive: true,
+    })
+    const total = result.adjustments.reduce((s, a) => s + a.amount, 0)
+    expect(total).toBe(5)
+  })
+
+  it("fixed with is_tax_inclusive=false uses tax-exclusive subtotal", () => {
+    const items = makeItems([
+      { id: "item_a", unit_price: 10, quantity: 3, subtotal: 25.4237 },
+    ])
+    // fixed 5 off, not tax-inclusive → uses subtotal/qty = 8.4746
+    const result = computeBuyGetRepeat("promo_1", items, b2g1Config, {
+      type: "fixed", value: 5, is_tax_inclusive: false,
+    })
+    const total = result.adjustments.reduce((s, a) => s + a.amount, 0)
+    expect(total).toBe(5)
+  })
+
+  it("does not floor — preserves fractional discount amounts", () => {
+    // 7.50 tax-incl, subtotal = 19.0678 for qty 3
+    const items = makeItems([
+      { id: "item_a", unit_price: 7.5, quantity: 3, subtotal: 19.0678 },
+    ])
+    // 50% off cheapest → 6.3559 * 0.5 = 3.1780 (not floor to 3)
+    const result = computeBuyGetRepeat("promo_1", items, b2g1Config, { type: "percentage", value: 50 })
+    const total = result.adjustments.reduce((s, a) => s + a.amount, 0)
+    expect(total).toBeCloseTo(3.178, 2)
+    // Verify it's NOT an integer (old Math.floor would give 3)
+    expect(total % 1).not.toBe(0)
   })
 })

@@ -167,7 +167,7 @@ describe("computeNonStandardAdjustments", () => {
       promotions: [{ id: "promo_1", code: "BUNDLE10", application_method: { type: "fixed", value: 5000, max_quantity: null, target_rules: [] } }],
       cartItems: [{ id: "item_1", unit_price: 2000, quantity: 3, product_id: "prod_1", product: {} }],
       cartExtAdjustments: [{ id: "ext_1", cart_id: "cart_1", item_id: "item_1", code: "BUNDLE10", amount: 1000, promotion_id: "promo_1", source: "bundle" }],
-      fullCartItems: [{ id: "item_1", adjustments: [nativeAdj] }],
+      fullCartItems: [{ id: "item_1", unit_price: 2000, quantity: 3, adjustments: [nativeAdj] }],
     })
 
     await computeNonStandardAdjustments("cart_1", container, {

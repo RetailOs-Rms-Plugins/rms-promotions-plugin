@@ -305,9 +305,39 @@ async function applyExtAdjustmentsToCart(
   )
 
   await cartModule.setLineItemAdjustments(cartId, cappedAdjustments)
+
+  if (freshlyLinkedCodes?.length) {
+    const promosWithAdj = new Set(
+      cappedAdjustments
+        .filter((a: any) => a.amount > 0 && a.promotion_id)
+        .map((a: any) => a.promotion_id as string)
+    )
+
+    const query = container.resolve(ContainerRegistrationKeys.QUERY)
+    const { data: linkedPromos } = await query.graph({
+      entity: "cart",
+      fields: ["promotions.id", "promotions.code"],
+      filters: { id: cartId },
+    })
+
+    const freshlyLinkedSet = new Set(freshlyLinkedCodes)
+    const toUnlink = ((linkedPromos[0]?.promotions ?? []) as any[]).filter(
+      (p: any) => freshlyLinkedSet.has(p.code) && !promosWithAdj.has(p.id)
+    )
+
+    if (toUnlink.length) {
+      const remoteLink = container.resolve(ContainerRegistrationKeys.LINK)
+      await remoteLink.dismiss(
+        toUnlink.map((p: any) => ({
+          [Modules.CART]: { cart_id: cartId },
+          [Modules.PROMOTION]: { promotion_id: p.id },
+        }))
+      )
+    }
+  }
 }
 
-async function scalePercentageAdjustmentsForBundleRemaining(
+export async function scalePercentageAdjustmentsForBundleRemaining(
   standardAdjs: { item_id: string; amount: number; is_tax_inclusive: boolean; promotion_id?: string; [key: string]: any }[],
   customAdjustments: { item_id: string; amount: number; is_tax_inclusive: boolean }[],
   itemTaxInclSubtotals: Map<string, number>,
