@@ -44,12 +44,15 @@ export const PATCH = async (
   const { id } = req.params
   const query = req.scope.resolve(ContainerRegistrationKeys.QUERY)
 
-  if (req.validatedBody.promotion_mode && req.validatedBody.promotion_mode !== "standard") {
+  const needsModeValidation =
+    req.validatedBody.promotion_mode || req.validatedBody.mode_config !== undefined
+
+  if (needsModeValidation) {
     const {
       data: [existingConfig],
     } = await query.graph({
       entity: PROMOTION_EXT_CONFIG_MODEL,
-      fields: ["promotion_id"],
+      fields: ["promotion_id", "promotion_mode", "mode_config"],
       filters: { id },
     })
 
@@ -57,12 +60,19 @@ export const PATCH = async (
       throw new MedusaError(MedusaError.Types.NOT_FOUND, `Promotion ext config with id "${id}" not found`)
     }
 
-    await validatePromotionModeCompatibility(
-      query,
-      (existingConfig as any).promotion_id,
-      req.validatedBody.promotion_mode,
-      req.validatedBody.mode_config
-    )
+    const effectiveMode = req.validatedBody.promotion_mode ?? (existingConfig as any).promotion_mode
+    const effectiveConfig = req.validatedBody.mode_config !== undefined
+      ? req.validatedBody.mode_config
+      : (existingConfig as any).mode_config
+
+    if (effectiveMode !== "standard") {
+      await validatePromotionModeCompatibility(
+        query,
+        (existingConfig as any).promotion_id,
+        effectiveMode,
+        effectiveConfig
+      )
+    }
   }
 
   const { result } = await updatePromotionExtConfigsWorkflow(req.scope).run({

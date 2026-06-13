@@ -56,7 +56,7 @@ function extractFormValues(mode: PromotionMode, config: ModeConfig): FormValues 
   return base
 }
 
-function validateModeCompatibility(mode: PromotionMode, am?: ApplicationMethod): string | null {
+function validateModeCompatibility(mode: PromotionMode, values: FormValues, am?: ApplicationMethod): string | null {
   if (mode === "standard") return null
 
   if (!am) return "Promotion has no application method configured."
@@ -67,6 +67,16 @@ function validateModeCompatibility(mode: PromotionMode, am?: ApplicationMethod):
 
   if (mode === "bundle" && am.type !== "fixed") {
     return "Bundle mode requires the promotion type 'Amount off products' (Fixed). A percentage type cannot represent a bundle target price."
+  }
+
+  const maxQty = am.max_quantity
+  if (maxQty != null && maxQty > 0) {
+    if (mode === "bundle" && values.bundle_size && maxQty < values.bundle_size) {
+      return `The promotion's Maximum Quantity (${maxQty}) is less than the bundle size (${values.bundle_size}). No complete bundles can form. Set max_quantity to at least ${values.bundle_size}, or leave it unset for unlimited.`
+    }
+    if (mode === "buyget_repeat" && values.buy_quantity && maxQty < values.buy_quantity) {
+      return `The promotion's Maximum Quantity (${maxQty}) is less than the buy quantity (${values.buy_quantity}). No buy-get cycles can form. Set max_quantity to at least ${values.buy_quantity}, or leave it unset for unlimited.`
+    }
   }
 
   return null
@@ -108,7 +118,7 @@ export function PromotionModeForm({
   }, [isDirty, isDirtyRef])
 
   const onSubmit = async (values: FormValues) => {
-    const validationError = validateModeCompatibility(values.promotion_mode, applicationMethod)
+    const validationError = validateModeCompatibility(values.promotion_mode, values, applicationMethod)
     if (validationError) {
       toast.error(validationError)
       return
