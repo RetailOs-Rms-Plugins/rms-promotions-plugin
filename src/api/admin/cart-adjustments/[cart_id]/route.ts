@@ -48,7 +48,7 @@ export const POST = async (
 ) => {
   const { cart_id } = req.params
   const query = req.scope.resolve(ContainerRegistrationKeys.QUERY)
-  const { item_id, amount, description, is_tax_inclusive } = req.validatedBody
+  const { item_id, amount, description, is_tax_inclusive, metadata } = req.validatedBody
 
   const { result } = await createCartExtAdjustmentsWorkflow(req.scope).run({
     input: {
@@ -63,6 +63,7 @@ export const POST = async (
           provider_id: null,
           description: description ?? null,
           is_tax_inclusive: is_tax_inclusive ?? false,
+          metadata: metadata ?? null,
         },
       ],
     },

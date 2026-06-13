@@ -3,6 +3,7 @@ import {
   WorkflowData,
   WorkflowResponse,
 } from "@medusajs/framework/workflows-sdk"
+import { MetadataType } from "@medusajs/framework/types"
 import { updateCartExtAdjustmentsStep } from "./steps"
 
 type UpdateCartExtAdjustmentsWorkflowInput = {
@@ -11,6 +12,7 @@ type UpdateCartExtAdjustmentsWorkflowInput = {
     amount?: number
     description?: string | null
     is_tax_inclusive?: boolean
+    metadata?: MetadataType
   }[]
 }
 
