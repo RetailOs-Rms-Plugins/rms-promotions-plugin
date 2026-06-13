@@ -156,10 +156,12 @@ Medusa's native `computeActions` handles the discount. The plugin does not inter
 
 Set a fixed price for a group of qualifying items, repeating for every complete group. Example: "3 for 50" — every 3 qualifying items cost 50 instead of their individual prices.
 
+**Target price per item:** Set `bundle_size: 1` to apply a target price per individual item. Example: "49.90 per item" — each qualifying item gets an adjustment equal to the difference between its original price and 49.90. Items cheaper than the target price are skipped (no negative discount).
+
 **Requirements:**
 - Medusa promotion must be "Amount off products" (`type: "fixed"`, `target_type: "items"`)
-- `application_method.value` = the bundle target price (e.g., 50 for "3 for 50")
-- `mode_config.bundle_size` = items per bundle (e.g., 3)
+- `application_method.value` = the bundle target price (e.g., 50 for "3 for 50", or 49.90 for per-item target pricing)
+- `mode_config.bundle_size` = items per bundle (minimum 1)
 
 **Item cap:** Set `application_method.max_quantity` to limit how many items can participate in bundles. Only complete bundles form — e.g., `max_quantity = 7` with `bundle_size = 3` yields 2 bundles (6 items). Leave unset for unlimited. **Important:** `max_quantity` must be >= `bundle_size`, otherwise no bundles can form.
 
@@ -278,18 +280,20 @@ The discount always applies to the cheapest qualifying items. Remaining items (t
 Operators can create manual discounts or surcharges on a cart via the admin API. Adjustments can target a specific line item or the entire cart (spread proportionally across items).
 
 ```bash
-# Create a cart-wide 10 EUR discount
+# Create a cart-wide 10 EUR discount (tax-inclusive)
 curl -X POST /admin/cart-adjustments/:cart_id \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
     "amount": 1000,
-    "code": "MANUAL_DISCOUNT",
-    "description": "VIP discount"
+    "description": "VIP discount",
+    "is_tax_inclusive": true
   }'
 ```
 
 Amount follows Medusa's convention: positive = discount, negative = surcharge. Cart-wide adjustments (`item_id: null`) are spread proportionally across items based on each item's share of the cart subtotal.
+
+Set `is_tax_inclusive: true` when the amount already includes tax (e.g., in tax-inclusive regions). Defaults to `false`. When omitted or `false`, Medusa adds tax on top of the discount amount, which can produce incorrect totals in tax-inclusive stores.
 
 ### Three-Layer Enforcement
 
