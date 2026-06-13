@@ -90,9 +90,13 @@ export async function restoreEvictedStandardPromos(
 
   const now = new Date()
   const evictedPromos: { id: string; code: string; is_tax_inclusive: boolean }[] = []
+  const budgetContextCodes: string[] = []
 
   for (const promotion of promotions) {
-    if (linkedPromoIds.has(promotion.id) && !options?.freshlyLinkedCodes?.has(promotion.code)) continue
+    if (linkedPromoIds.has(promotion.id) && !options?.freshlyLinkedCodes?.has(promotion.code)) {
+      budgetContextCodes.push(promotion.code)
+      continue
+    }
 
     const isActive =
       promotion.status === "active" &&
@@ -176,8 +180,9 @@ export async function restoreEvictedStandardPromos(
   }
 
   const evictedCodes = evictedPromos.map((p) => p.code)
+  const allCodes = [...evictedCodes, ...budgetContextCodes]
 
-  const actions = await promotionService.computeActions(evictedCodes, cleanContext, {
+  const actions = await promotionService.computeActions(allCodes, cleanContext, {
     prevent_auto_promotions: true,
   })
 
@@ -217,12 +222,15 @@ export async function restoreEvictedStandardPromos(
     const promoId = promoCodeToId.get((action as any).code)
     if (!promoId) continue
 
+    const amount = typeof (action as any).amount === "number"
+      ? (action as any).amount
+      : Number((action as any).amount ?? 0)
+    if (amount <= 0) continue
+
     restoredAdjustments.push({
       item_id: (action as any).item_id,
       code: (action as any).code,
-      amount: typeof (action as any).amount === "number"
-        ? (action as any).amount
-        : Number((action as any).amount ?? 0),
+      amount,
       is_tax_inclusive: promoCodeToTaxInclusive.get((action as any).code) ?? false,
       promotion_id: promoId,
     })

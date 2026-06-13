@@ -208,12 +208,14 @@ export function capAdjustmentsToSubtotal(
 
   const sorted = [...otherAdjustments].sort((a, b) => b.amount - a.amount)
 
-  const capped = sorted.map((adj) => {
+  const capped: typeof otherAdjustments = []
+  for (const adj of sorted) {
     const remaining = Math.max(0, remainingByItem.get(adj.item_id) ?? 0)
     const cappedAmount = Math.min(adj.amount, remaining)
+    if (cappedAmount <= 0) continue
     remainingByItem.set(adj.item_id, remaining - cappedAmount)
-    return { ...adj, amount: cappedAmount }
-  })
+    capped.push({ ...adj, amount: cappedAmount })
+  }
 
   return [...priorityAdjustments, ...capped]
 }
