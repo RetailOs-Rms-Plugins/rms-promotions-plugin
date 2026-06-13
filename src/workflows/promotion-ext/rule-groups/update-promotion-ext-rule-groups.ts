@@ -3,12 +3,14 @@ import {
   WorkflowData,
   WorkflowResponse,
 } from "@medusajs/framework/workflows-sdk"
+import { MetadataType } from "@medusajs/framework/types"
 import { updatePromotionExtRuleGroupsStep } from "./steps"
 
 type UpdatePromotionExtRuleGroupsWorkflowInput = {
   items: {
     id: string
     type?: "include" | "exclude"
+    metadata?: MetadataType
   }[]
 }
 

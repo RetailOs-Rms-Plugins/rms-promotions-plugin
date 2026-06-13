@@ -1,10 +1,11 @@
-import { PaginatedResponse } from "@medusajs/framework/types"
+import { MetadataType, PaginatedResponse } from "@medusajs/framework/types"
 
 export interface AdminPromotionExtRule {
   id: string
   rule_group_id: string
   rule_type: string
   config: Record<string, unknown>
+  metadata: MetadataType
   created_at: Date
   updated_at: Date
   deleted_at: Date | null

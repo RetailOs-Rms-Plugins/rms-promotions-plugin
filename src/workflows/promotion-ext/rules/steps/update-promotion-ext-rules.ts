@@ -1,4 +1,5 @@
 import { createStep, StepResponse } from "@medusajs/framework/workflows-sdk"
+import { MetadataType } from "@medusajs/framework/types"
 import { PROMOTION_EXT_MODULE } from "../../../../modules/promotion-ext"
 import PromotionExtModuleService from "../../../../modules/promotion-ext/service"
 
@@ -9,6 +10,7 @@ type UpdatePromotionExtRulesStepInput = {
     id: string
     rule_type?: string
     config?: Record<string, unknown>
+    metadata?: MetadataType
   }[]
 }
 

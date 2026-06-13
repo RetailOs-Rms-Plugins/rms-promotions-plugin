@@ -1,4 +1,4 @@
-import { PaginatedResponse } from "@medusajs/framework/types"
+import { MetadataType, PaginatedResponse } from "@medusajs/framework/types"
 
 export interface AdminPromotionExtConfig {
   id: string
@@ -6,6 +6,7 @@ export interface AdminPromotionExtConfig {
   auto_apply: boolean
   promotion_mode: string
   mode_config: Record<string, unknown> | null
+  metadata: MetadataType
   created_at: Date
   updated_at: Date
   deleted_at: Date | null

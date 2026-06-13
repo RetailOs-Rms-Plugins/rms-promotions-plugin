@@ -1,4 +1,5 @@
 import { createStep, StepResponse } from "@medusajs/framework/workflows-sdk"
+import { MetadataType } from "@medusajs/framework/types"
 import { PROMOTION_EXT_MODULE } from "../../../../modules/promotion-ext"
 import PromotionExtModuleService from "../../../../modules/promotion-ext/service"
 
@@ -15,7 +16,7 @@ type CreateCartExtAdjustmentsStepInput = {
     promotion_id?: string | null
     provider_id?: string | null
     is_tax_inclusive?: boolean
-    metadata?: Record<string, unknown> | null
+    metadata?: MetadataType
   }[]
 }
 

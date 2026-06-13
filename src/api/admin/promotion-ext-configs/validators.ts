@@ -43,6 +43,7 @@ export const AdminCreatePromotionExtConfigSchema = z.object({
   exclude_groups_combinator: z.enum(COMBINATORS).optional().default("or"),
   promotion_mode: z.enum(PROMOTION_MODES).optional().default("standard"),
   mode_config: z.union([BundleModeConfigSchema, BuygetRepeatModeConfigSchema]).nullable().optional(),
+  metadata: z.record(z.string(), z.unknown()).nullish(),
 }).superRefine((data, ctx) => {
   if (data.promotion_mode === "standard" && data.mode_config != null) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "mode_config must be null when promotion_mode is 'standard'", path: ["mode_config"] })
@@ -74,6 +75,7 @@ export const AdminUpdatePromotionExtConfigSchema = z.object({
   exclude_groups_combinator: z.enum(COMBINATORS).optional(),
   promotion_mode: z.enum(PROMOTION_MODES).optional(),
   mode_config: z.union([BundleModeConfigSchema, BuygetRepeatModeConfigSchema]).nullable().optional(),
+  metadata: z.record(z.string(), z.unknown()).nullish(),
 })
 
 export const AdminUpdatePromotionExtConfigsWorkflowInputSchema = z.object({

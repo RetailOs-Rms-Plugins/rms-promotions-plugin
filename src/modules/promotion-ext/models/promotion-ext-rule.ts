@@ -6,6 +6,7 @@ export const PromotionExtRule = model.define(PROMOTION_EXT_RULE_MODEL, {
   id: model.id({ prefix: "per" }).primaryKey(),
   rule_type: model.text(),
   config: model.json(),
+  metadata: model.json().nullable(),
   rule_group: model.belongsTo(() => PromotionExtRuleGroup, {
     mappedBy: "rules",
   }),

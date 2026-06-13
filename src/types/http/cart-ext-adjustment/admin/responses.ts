@@ -1,4 +1,4 @@
-import { PaginatedResponse } from "@medusajs/framework/types"
+import { MetadataType, PaginatedResponse } from "@medusajs/framework/types"
 
 export interface AdminCartExtAdjustment {
   id: string
@@ -7,7 +7,7 @@ export interface AdminCartExtAdjustment {
   code: string | null
   amount: number
   provider_id: string | null
-  metadata: Record<string, unknown> | null
+  metadata: MetadataType
   item_id: string | null
   is_tax_inclusive: boolean
   cart_id: string
