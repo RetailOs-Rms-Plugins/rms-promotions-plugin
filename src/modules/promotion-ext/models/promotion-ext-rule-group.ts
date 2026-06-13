@@ -7,6 +7,7 @@ export const PromotionExtRuleGroup = model.define(PROMOTION_EXT_RULE_GROUP_MODEL
   id: model.id({ prefix: "perg" }).primaryKey(),
   type: model.text(),
   rules_combinator: model.text().default("and"),
+  metadata: model.json().nullable(),
   promotion_config: model.belongsTo(() => PromotionExtConfig, {
     mappedBy: "rule_groups",
   }),

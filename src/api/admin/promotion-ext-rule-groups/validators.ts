@@ -23,6 +23,7 @@ export const AdminCreatePromotionExtRuleGroupSchema = z.object({
   promotion_config_id: z.string().min(1, "promotion_config_id is required"),
   type: z.enum(RULE_GROUP_TYPES),
   rules_combinator: z.enum(COMBINATORS).optional().default("and"),
+  metadata: z.record(z.unknown()).nullish(),
 })
 
 export const AdminCreatePromotionExtRuleGroupsWorkflowInputSchema = z.object({
@@ -34,6 +35,7 @@ export const AdminCreatePromotionExtRuleGroupsWorkflowInputSchema = z.object({
 export const AdminUpdatePromotionExtRuleGroupSchema = z.object({
   type: z.enum(RULE_GROUP_TYPES).optional(),
   rules_combinator: z.enum(COMBINATORS).optional(),
+  metadata: z.record(z.unknown()).nullish(),
 })
 
 export const AdminUpdatePromotionExtRuleGroupsWorkflowInputSchema = z.object({
