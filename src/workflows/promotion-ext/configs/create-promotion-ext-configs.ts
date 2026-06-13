@@ -3,6 +3,7 @@ import {
   WorkflowData,
   WorkflowResponse,
 } from "@medusajs/framework/workflows-sdk"
+import { MetadataType } from "@medusajs/framework/types"
 import { createPromotionExtConfigsStep } from "./steps"
 
 type CreatePromotionExtConfigsWorkflowInput = {
@@ -11,6 +12,7 @@ type CreatePromotionExtConfigsWorkflowInput = {
     auto_apply?: boolean
     promotion_mode?: string
     mode_config?: Record<string, unknown> | null
+    metadata?: MetadataType
   }[]
 }
 
