@@ -287,4 +287,122 @@ describe("computeNonStandardAdjustments", () => {
 
     expect(createdExtAdjs).toHaveLength(0)
   })
+
+  it("does not duplicate cart-wide manual adjustments already on cart items", async () => {
+    const manualAdj = {
+      id: "adj_manual_1",
+      code: "MANUAL_abc",
+      amount: 1,
+      promotion_id: null,
+      is_tax_inclusive: true,
+      description: "Simply discount",
+      provider_id: null,
+    }
+
+    const { container, setLineItemAdjustmentsCalls } = createMockContainer({
+      configs: [{ promotion_id: "promo_1", promotion_mode: "bundle", mode_config: { bundle_size: 3, remainder: "full_price" } }],
+      promotions: [{ id: "promo_1", code: "BUNDLE10", application_method: { type: "fixed", value: 5000, max_quantity: null, target_rules: [] } }],
+      cartItems: [
+        { id: "item_1", unit_price: 10, quantity: 1, product_id: "prod_1", product: {} },
+        { id: "item_2", unit_price: 10, quantity: 1, product_id: "prod_2", product: {} },
+      ],
+      cartExtAdjustments: [
+        { id: "cea_1", cart_id: "cart_1", item_id: null, code: "MANUAL_abc", amount: 2, promotion_id: null, source: "manual", is_tax_inclusive: true },
+      ],
+      fullCartItems: [
+        { id: "item_1", unit_price: 10, quantity: 1, is_tax_inclusive: true, tax_lines: [], adjustments: [{ ...manualAdj, amount: 1 }] },
+        { id: "item_2", unit_price: 10, quantity: 1, is_tax_inclusive: true, tax_lines: [], adjustments: [{ ...manualAdj, id: "adj_manual_2", amount: 1 }] },
+      ],
+    })
+
+    await computeNonStandardAdjustments("cart_1", container, {
+      appliedPromotionCodes: [],
+    })
+
+    expect(setLineItemAdjustmentsCalls).toHaveLength(1)
+    const finalAdjs = setLineItemAdjustmentsCalls[0]
+    const manualAdjs = finalAdjs.filter((a: any) => a.code === "MANUAL_abc")
+    expect(manualAdjs).toHaveLength(2)
+    expect(manualAdjs.reduce((sum: number, a: any) => sum + a.amount, 0)).toBe(2)
+  })
+
+  it("preserves standard promo adjustments while deduplicating manual adjustments", async () => {
+    const standardAdj = {
+      id: "adj_std_1",
+      code: "SUMMER10",
+      amount: 1,
+      promotion_id: "promo_standard",
+      is_tax_inclusive: true,
+      provider_id: null,
+    }
+    const manualAdj = {
+      id: "adj_manual_1",
+      code: "MANUAL_xyz",
+      amount: 1,
+      promotion_id: null,
+      is_tax_inclusive: true,
+      provider_id: null,
+    }
+
+    const { container, setLineItemAdjustmentsCalls } = createMockContainer({
+      configs: [{ promotion_id: "promo_1", promotion_mode: "bundle", mode_config: { bundle_size: 3, remainder: "full_price" } }],
+      promotions: [{ id: "promo_1", code: "BUNDLE10", application_method: { type: "fixed", value: 5000, max_quantity: null, target_rules: [] } }],
+      cartItems: [
+        { id: "item_1", unit_price: 10, quantity: 1, product_id: "prod_1", product: {} },
+      ],
+      cartExtAdjustments: [
+        { id: "cea_1", cart_id: "cart_1", item_id: "item_1", code: "MANUAL_xyz", amount: 1, promotion_id: null, source: "manual", is_tax_inclusive: true },
+      ],
+      fullCartItems: [
+        { id: "item_1", unit_price: 10, quantity: 1, is_tax_inclusive: true, tax_lines: [], adjustments: [standardAdj, manualAdj] },
+      ],
+    })
+
+    await computeNonStandardAdjustments("cart_1", container, {
+      appliedPromotionCodes: [],
+    })
+
+    expect(setLineItemAdjustmentsCalls).toHaveLength(1)
+    const finalAdjs = setLineItemAdjustmentsCalls[0]
+    const stdAdjs = finalAdjs.filter((a: any) => a.code === "SUMMER10")
+    const manualAdjs = finalAdjs.filter((a: any) => a.code === "MANUAL_xyz")
+    expect(stdAdjs).toHaveLength(1)
+    expect(stdAdjs[0].promotion_id).toBe("promo_standard")
+    expect(manualAdjs).toHaveLength(1)
+  })
+
+  it("does not duplicate item-specific manual adjustments already on cart items", async () => {
+    const manualAdj = {
+      id: "adj_manual_1",
+      code: "MANUAL_item",
+      amount: 3,
+      promotion_id: null,
+      is_tax_inclusive: true,
+      provider_id: null,
+    }
+
+    const { container, setLineItemAdjustmentsCalls } = createMockContainer({
+      configs: [{ promotion_id: "promo_1", promotion_mode: "bundle", mode_config: { bundle_size: 3, remainder: "full_price" } }],
+      promotions: [{ id: "promo_1", code: "BUNDLE10", application_method: { type: "fixed", value: 5000, max_quantity: null, target_rules: [] } }],
+      cartItems: [
+        { id: "item_1", unit_price: 10, quantity: 1, product_id: "prod_1", product: {} },
+      ],
+      cartExtAdjustments: [
+        { id: "cea_1", cart_id: "cart_1", item_id: "item_1", code: "MANUAL_item", amount: 3, promotion_id: null, source: "manual", is_tax_inclusive: true },
+      ],
+      fullCartItems: [
+        { id: "item_1", unit_price: 10, quantity: 1, is_tax_inclusive: true, tax_lines: [], adjustments: [manualAdj] },
+      ],
+    })
+
+    await computeNonStandardAdjustments("cart_1", container, {
+      appliedPromotionCodes: [],
+    })
+
+    expect(setLineItemAdjustmentsCalls).toHaveLength(1)
+    const finalAdjs = setLineItemAdjustmentsCalls[0]
+    const manualAdjs = finalAdjs.filter((a: any) => a.code === "MANUAL_item")
+    expect(manualAdjs).toHaveLength(1)
+    expect(manualAdjs[0].amount).toBe(3)
+  })
 })
