@@ -204,10 +204,15 @@ async function applyExtAdjustmentsToCart(
   const cartModule = container.resolve(Modules.CART)
   const fullCart = await cartModule.retrieveCart(cartId, { relations: ["items.adjustments", "items", "items.tax_lines"] })
 
+  const cartExtAdjCodes = new Set(cartExtAdjustments.map((a: any) => a.code).filter(Boolean))
+
   const preservedAdjustments: { id: string; item_id: string; code: string; amount: number; is_tax_inclusive: boolean; description?: string; promotion_id?: string; provider_id?: string; metadata?: Record<string, unknown> }[] = []
   for (const item of (fullCart.items ?? [])) {
     for (const adj of ((item as any).adjustments ?? [])) {
       if (customModePromoIds.has(adj.promotion_id)) {
+        continue
+      }
+      if (cartExtAdjCodes.has(adj.code)) {
         continue
       }
       preservedAdjustments.push({
