@@ -24,6 +24,7 @@ Single source of truth for all bug fixes in the promotion plugin. Each entry rec
 | BF-012 | `adjustment-calculator.unit.spec.ts` — `BF-012:` tests | `zero-adjustment-promo-bugs.spec.ts` — BF-012 describe |
 | BF-013 | `scale-percentage-adjustments.unit.spec.ts` | None |
 | BF-014 | None | `zero-adjustment-promo-bugs.spec.ts` — BF-014 describe |
+| BF-015 | `compute-non-standard-adjustments.unit.spec.ts` — 3 dedup tests | None |
 
 ---
 
@@ -32,7 +33,7 @@ Single source of truth for all bug fixes in the promotion plugin. Each entry rec
 | File | Fix IDs |
 |------|---------|
 | `src/lib/adjustment-calculator.ts` | BF-001, BF-009, BF-010, BF-012 |
-| `src/lib/compute-non-standard-adjustments.ts` | BF-001, BF-002, BF-008, BF-012, BF-013 |
+| `src/lib/compute-non-standard-adjustments.ts` | BF-001, BF-002, BF-008, BF-012, BF-013, BF-015 |
 | `src/lib/restore-evicted-standard-promos.ts` | BF-003, BF-008, BF-010, BF-012, BF-014 |
 | `src/lib/evaluate-auto-apply-promotions.ts` | BF-002, BF-003 |
 | `src/subscribers/sync-non-standard-adjustments.ts` | BF-002, BF-008 |
@@ -341,4 +342,51 @@ BF-003 (phantom links) — independent
 BF-007 (bundle_size=1) — independent
 BF-010 (tax basis) — independent
 BF-011 (admin routes) — independent
+BF-015 (manual adjustment duplication) — independent
 ```
+
+---
+
+## BF-015: Manual/ext adjustments duplicated on every cart mutation
+
+**Date:** 2026-06-17
+**Severity:** Critical
+**Reported by:** Client (haturki) — Simply integration producing 3× discount on cart
+**GitHub:** #74
+
+**Symptom:** After adding a cart-wide manual adjustment (e.g., Simply club discount of 5.20 ILS), each subsequent cart mutation (add item, update quantity, change address, update metadata) duplicates the adjustment on every line item. After N mutations, each item has N+1 identical adjustments with the same `MANUAL_*` code. `discount_total` is inflated proportionally (e.g., 5.20 → 15.60 after 2 mutations).
+
+**Reproduction:**
+1. Create cart with items
+2. `POST /admin/cart-adjustments/:cart_id` with cart-wide amount (no `item_id`)
+3. Any cart mutation (e.g., add another item, update quantity)
+4. `GET /store/carts/:id` → each item has 2 identical adjustments
+5. Another mutation → 3 identical adjustments, etc.
+
+**Root cause:** `applyExtAdjustmentsToCart` in `compute-non-standard-adjustments.ts` built line item adjustments from two sources that both contained the same manual adjustment:
+
+1. **`preservedAdjustments`** (lines 207-225): Read all non-custom-mode adjustments from `cart.items[].adjustments`. The only filter was `customModePromoIds.has(adj.promotion_id)` — manual adjustments have `promotion_id: null`, so they passed through.
+2. **`customAdjustments`** (lines 227-268): Read from the `cart_ext_adjustment` table and spread cart-wide entries across items. This re-created the same manual adjustment.
+
+Both arrays merged via `capAdjustmentsToSubtotal` (line 301-304) without cross-source deduplication. `setLineItemAdjustments` wrote the duplicates. On the next `cart.updated` event (triggered by any cart mutation), the subscriber re-ran `applyExtAdjustmentsToCart`, which read the now-doubled adjustments from cart items into `preservedAdjustments` and added one more from the table, producing N+1.
+
+**Why the cascade didn't self-trigger:** `setLineItemAdjustments` does NOT emit `cart.updated`. The accumulation only grew by 1 per external cart mutation (add item, update qty, etc.), not from an internal loop. The client's Simply integration flow performed multiple cart mutations (lock benefit → update metadata → update address), producing 3 passes.
+
+**Fix:** Before the `preservedAdjustments` loop, build a `Set` of all codes tracked in the `cart_ext_adjustment` table. Skip any adjustment whose `code` is in that set. These adjustments are always re-created fresh from the table via the `customAdjustments` path, so preserving them from cart items double-counts them.
+
+```ts
+const cartExtAdjCodes = new Set(cartExtAdjustments.map((a: any) => a.code).filter(Boolean))
+// Inside the loop:
+if (cartExtAdjCodes.has(adj.code)) continue
+```
+
+**Files changed:** `compute-non-standard-adjustments.ts` (added `cartExtAdjCodes` filter in `applyExtAdjustmentsToCart`).
+
+**Test coverage:** `compute-non-standard-adjustments.unit.spec.ts` — three tests:
+- "does not duplicate cart-wide manual adjustments already on cart items"
+- "preserves standard promo adjustments while deduplicating manual adjustments"
+- "does not duplicate item-specific manual adjustments already on cart items"
+
+**Reverts if removed:** Manual and ext-tracked adjustments duplicate on every cart mutation. Discount inflates by 1× per mutation. Affects any store using cart-wide manual adjustments (Simply integration, admin manual discounts).
+
+**Safe for standard promotions:** Standard promotion adjustments have `promotion_id` set and their `code` is the promotion code — not a `MANUAL_*` or ext-tracked code that appears in `cart_ext_adjustment`. The filter only removes adjustments whose codes are explicitly tracked in the plugin's own table.
