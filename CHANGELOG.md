@@ -1,5 +1,11 @@
 # @retailos-ai/rms-promotions-extension
 
+## 1.1.12
+
+### Patch Changes
+
+- 75d056f: Upgrade Medusa dependencies to v2.16.0
+
 ## 1.1.11
 
 ### Patch Changes
