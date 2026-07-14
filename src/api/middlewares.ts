@@ -3,6 +3,7 @@ import promotionExtConfigsMiddlewares from "./admin/promotion-ext-configs/middle
 import promotionExtRuleGroupsMiddlewares from "./admin/promotion-ext-rule-groups/middlewares"
 import promotionExtRulesMiddlewares from "./admin/promotion-ext-rules/middlewares"
 import cartExtAdjustmentsMiddlewares from "./admin/cart-adjustments/middlewares"
+import { v1CartAdjustmentRouteMiddlewares } from "./v1/cart-adjustments/middlewares"
 
 export default defineMiddlewares({
   routes: [
@@ -10,5 +11,6 @@ export default defineMiddlewares({
     ...(promotionExtRuleGroupsMiddlewares.routes ?? []),
     ...(promotionExtRulesMiddlewares.routes ?? []),
     ...(cartExtAdjustmentsMiddlewares.routes ?? []),
+    ...v1CartAdjustmentRouteMiddlewares,
   ],
 })

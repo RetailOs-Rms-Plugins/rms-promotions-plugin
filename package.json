@@ -20,6 +20,9 @@
       "default": "./.medusa/server/src/admin/index.js"
     }
   },
+  "dependencies": {
+    "@retailos-ai/rms-access": "^1.2.3"
+  },
   "keywords": [
     "medusa",
     "plugin",
