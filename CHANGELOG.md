@@ -1,5 +1,11 @@
 # @retailos-ai/rms-promotions-extension
 
+## 1.2.0
+
+### Minor Changes
+
+- c7225a4: Add scoped v1/cart-adjustments routes with RBAC auth
+
 ## 1.1.12
 
 ### Patch Changes
