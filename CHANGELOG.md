@@ -1,5 +1,11 @@
 # @retailos-ai/rms-promotions-extension
 
+## 1.3.0
+
+### Minor Changes
+
+- 0f48c08: Add cart-logic barrel export and remove cart extension points (routes, workflow hooks, cart event subscribers) now owned by rms-cart-orchestrator
+
 ## 1.2.0
 
 ### Minor Changes
