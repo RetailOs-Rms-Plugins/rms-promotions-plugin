@@ -21,9 +21,7 @@
       "default": "./.medusa/server/src/admin/index.js"
     }
   },
-  "dependencies": {
-    "@retailos-ai/rms-access": "^1.2.3"
-  },
+  "dependencies": {},
   "keywords": [
     "medusa",
     "plugin",
@@ -51,6 +49,7 @@
     "@medusajs/medusa": "2.16.0",
     "@medusajs/test-utils": "2.16.0",
     "@medusajs/ui": "4.1.16",
+    "@retailos-ai/rms-access": "^1.2.3",
     "@retailos-ai/rms-medusa-ui": "^1.2.3",
     "@swc/core": "^1.7.28",
     "@swc/jest": "^0.2.39",
@@ -76,6 +75,7 @@
     "@medusajs/medusa": "2.16.0",
     "@medusajs/test-utils": "2.16.0",
     "@medusajs/ui": "4.1.16",
+    "@retailos-ai/rms-access": "^1.2.3",
     "@retailos-ai/rms-medusa-ui": "^1.2.3"
   },
   "engines": {
