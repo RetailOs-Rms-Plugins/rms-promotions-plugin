@@ -5895,6 +5895,7 @@ __metadata:
     "@medusajs/medusa": 2.16.0
     "@medusajs/test-utils": 2.16.0
     "@medusajs/ui": 4.1.16
+    "@retailos-ai/rms-access": ^1.2.3
     "@retailos-ai/rms-medusa-ui": ^1.2.3
   languageName: unknown
   linkType: soft

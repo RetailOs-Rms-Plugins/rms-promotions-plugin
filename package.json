@@ -21,7 +21,6 @@
       "default": "./.medusa/server/src/admin/index.js"
     }
   },
-  "dependencies": {},
   "keywords": [
     "medusa",
     "plugin",
