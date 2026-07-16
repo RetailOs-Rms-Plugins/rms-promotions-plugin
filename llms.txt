@@ -1,6 +1,6 @@
 ---
 name: @retailos-ai/rms-promotions-extension
-version: 1.1.10
+version: 1.3.0
 language: TypeScript
 license: MIT
 entry: src/modules/promotion-ext/index.ts
@@ -10,15 +10,15 @@ repo: https://github.com/RetailOs-Rms-Plugins/rms-promotions-plugin.git
 
 # INDEX
 # L23   [OVERVIEW]    —  What this plugin does and its core architecture
-# L33   [INSTALL]     —  Requirements and installation commands
-# L56   [QUICKSTART]  —  Minimal working example with curl
-# L81   [USAGE]       —  Rule fields, promotion modes, compatibility matrix, enforcement layers
-# L176  [IMPLEMENT]   —  Consumer integration recipes: API + UI guides with full examples
-# L374  [CONFIG]      —  Promotion ext config fields and mode_config shapes
-# L399  [STRUCTURE]   —  File and directory layout with route overrides and shared libs
-# L446  [API]         —  All REST endpoints with methods and paths
-# L478  [DEPS]        —  Key dependencies
-# L490  [DEV]         —  Development setup, test, and build commands
+# L35   [INSTALL]     —  Requirements and installation commands
+# L58   [QUICKSTART]  —  Minimal working example with curl
+# L83   [USAGE]       —  Rule fields, promotion modes, compatibility matrix, enforcement layers
+# L178  [IMPLEMENT]   —  Consumer integration recipes: API + UI guides with full examples
+# L423  [CONFIG]      —  Promotion ext config fields and mode_config shapes
+# L450  [STRUCTURE]   —  File and directory layout with route overrides and shared libs
+# L502  [API]         —  All REST endpoints with methods and paths
+# L538  [DEPS]        —  Key dependencies
+# L551  [DEV]         —  Development setup, test, and build commands
 
 ## [OVERVIEW]
 
@@ -30,9 +30,11 @@ All plugin-managed promotions must have `is_automatic: false` in Medusa. The plu
 
 Four DB tables: `promotion_ext_config`, `promotion_ext_rule_group`, `promotion_ext_rule`, `cart_ext_adjustment`. Admin widget injected at `promotion.details.after`.
 
+All four models support arbitrary JSON metadata. A scoped `/v1/cart-adjustments` API provides RBAC-authenticated access via `@retailos-ai/rms-access`. Cart logic functions are barrel-exported via `./cart-logic` for reuse by `rms-cart-orchestrator`.
+
 ## [INSTALL]
 
-Requires: Node.js 20+, @medusajs/medusa 2.15.2, PostgreSQL
+Requires: Node.js 20+, @medusajs/medusa 2.16.0, PostgreSQL
 
 ```bash
 yarn add @retailos-ai/rms-promotions-extension
@@ -371,6 +373,53 @@ Troubleshooting:
 - Adjustments disappear after cart update: expected -- the subscriber re-applies from cart_ext_adjustment table on every update
 - No bundles forming despite correct config: verify max_quantity >= bundle_size and that target_rules match cart items
 
+### Using the v1 RBAC cart adjustment routes
+
+When to use: you have a non-admin user (e.g. store operator) that needs to manage cart adjustments through RBAC-controlled access instead of full admin auth
+
+Prerequisites:
+- @retailos-ai/rms-access configured with RBAC roles
+- User has "cart-adjustment" read/create/remove permissions
+
+```bash
+# List adjustments (requires "read" permission)
+curl -X GET http://localhost:9000/v1/cart-adjustments/:cart_id \
+  -H "Authorization: Bearer <rbac-user-token>"
+
+# Create adjustment (requires "create" permission)
+curl -X POST http://localhost:9000/v1/cart-adjustments/:cart_id \
+  -H "Authorization: Bearer <rbac-user-token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "amount": 1000, "description": "Operator discount" }'
+
+# Delete adjustment (requires "remove" permission)
+curl -X DELETE http://localhost:9000/v1/cart-adjustments/:cart_id/:id \
+  -H "Authorization: Bearer <rbac-user-token>"
+```
+
+### Importing cart logic for external orchestration
+
+When to use: another plugin (e.g. rms-cart-orchestrator) needs to reuse this plugin's cart evaluation and adjustment logic
+
+```ts
+import {
+  evaluateAutoApplyPromotions,
+  computeNonStandardAdjustments,
+  cartUpdatedHandler,
+  validateCartPromotions,
+  validateCheckout,
+  cleanupCartExtAdjustments,
+  refetchCart,
+  handleAddLineItem,
+  handleUpdateLineItem,
+  handleDeleteLineItem,
+  handleAddPromotions,
+  handleRemovePromotions,
+} from "@retailos-ai/rms-promotions-extension/cart-logic"
+```
+
+These functions are standalone (extracted from subscribers and route overrides) and can be called directly from another plugin's routes or subscribers.
+
 ## [CONFIG]
 
 PromotionExtConfig fields:
@@ -396,6 +445,8 @@ Reused application_method fields for non-standard modes:
   value: number — bundle price (must be > 0) or discount amount/%
   max_quantity: number|null — bundle: >= bundle_size or null; buy-get: >= buy_quantity or null
 
+All four models (PromotionExtConfig, PromotionExtRuleGroup, PromotionExtRule, CartExtAdjustment) accept an optional `metadata: Record<string, unknown>` field for arbitrary JSON.
+
 ## [STRUCTURE]
 
 src/admin/components/rules-editor/: Drawer-based rule editor with combinator toggles and group cards
@@ -407,10 +458,14 @@ src/api/admin/promotion-ext-configs/: Config REST routes, validators, mode valid
 src/api/admin/promotion-ext-rule-groups/: Rule group REST routes and validators
 src/api/admin/promotion-ext-rules/: Rule REST routes and validators
 src/api/admin/cart-adjustments/: Manual cart adjustment CRUD per cart
+src/api/v1/cart-adjustments/: RBAC-scoped proxy routes for cart adjustments (read, create, delete)
 src/api/store/carts/[id]/line-items/route.ts: Override add-item — sync auto-apply + adjustments after workflow
 src/api/store/carts/[id]/line-items/[line_id]/route.ts: Override update/delete-item — sync auto-apply + adjustments
 src/api/store/carts/[id]/promotions/route.ts: Override promo code entry — sync non-standard adjustments
 src/api/store/carts/helpers.ts: Shared refetchCart utility for store route overrides
+src/lib/cart-logic-exports.ts: Barrel export of cart logic functions for external consumers
+src/lib/cart-route-handlers.ts: Extracted route override logic (add/update/delete item, add/remove promotions)
+src/lib/cart-updated-handler.ts: Extracted subscriber logic for cart.updated events
 src/lib/rule-evaluator.ts: Pure rule evaluation function (no DB, no side effects)
 src/lib/cart-enricher.ts: Builds EnrichedCart context with order history
 src/lib/adjustment-calculator.ts: Bundle and buy-get repeat computation
@@ -430,6 +485,7 @@ src/subscribers/promotion-deleted.ts: Soft-deletes config/groups/rules on promot
 src/subscribers/promotion-restored.ts: Restores soft-deleted config/groups/rules on promotion.restored
 src/subscribers/cart-completed.ts: Cleans up cart_ext_adjustment rows when cart completes (order placed)
 src/types/: HTTP payload and response TypeScript types
+src/types/rbac.ts: RBAC module declarations for @retailos-ai/rms-access
 src/workflows/promotion-ext/: Medusa workflows for CRUD operations
 docs/metadata-promotion-enforcement/CONTEXT.md: Domain glossary
 docs/metadata-promotion-enforcement/adr/: 9 Architecture Decision Records:
@@ -475,14 +531,19 @@ DELETE /admin/cart-adjustments/:cart_id/:id — Delete adjustment
 PATCH  /admin/cart-adjustments/:cart_id/batch — Batch update
 DELETE /admin/cart-adjustments/:cart_id/batch — Batch delete
 
+POST   /v1/cart-adjustments/:cart_id — Create adjustment (RBAC: create)
+GET    /v1/cart-adjustments/:cart_id — List adjustments (RBAC: read)
+DELETE /v1/cart-adjustments/:cart_id/:id — Delete adjustment (RBAC: remove)
+
 ## [DEPS]
 
-@medusajs/framework 2.15.2: Core Medusa framework (modules, workflows, hooks)
-@medusajs/medusa 2.15.2: Medusa application server
-@medusajs/admin-sdk 2.15.2: Admin widget injection (defineWidgetConfig)
-@medusajs/ui 4.1.12: Admin UI components (Drawer, Prompt, Badge, Switch, Tooltip)
+@medusajs/framework 2.16.0: Core Medusa framework (modules, workflows, hooks)
+@medusajs/medusa 2.16.0: Medusa application server
+@medusajs/admin-sdk 2.16.0: Admin widget injection (defineWidgetConfig)
+@medusajs/ui 4.1.16: Admin UI components (Drawer, Prompt, Badge, Switch, Tooltip)
 @medusajs/icons 2.1.3: Admin icon set
 @retailos-ai/rms-medusa-ui ^1.2.3: Custom UI components (RouteFocusModal)
+@retailos-ai/rms-access ^1.2.3: RBAC authentication and permission middleware
 react 19.0.0: Admin UI rendering
 react-hook-form 7.54.2: Form state management in rule editor
 @tanstack/react-query 5.64.2: Server state management for admin hooks

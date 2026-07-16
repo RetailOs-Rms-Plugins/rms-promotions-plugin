@@ -15,13 +15,22 @@ Medusa's native promotion system handles discount calculation well, but its elig
 - **Admin widget**: visual rule editor and promotion mode configuration injected into the Medusa promotion detail page
 - **Full REST API**: CRUD + batch endpoints for configs, rule groups, rules, and cart adjustments
 - **Normalized storage**: four dedicated DB tables with proper FK cascades, enabling SQL-level filtering
+- **Metadata on all models**: arbitrary JSON metadata on configs, rule groups, rules, and cart adjustments
+- **RBAC-scoped v1 routes**: `/v1/cart-adjustments` endpoints authenticated via `@retailos-ai/rms-access` with read/create/remove RBAC checks
+- **Cart logic barrel export**: reusable functions exported via `@retailos-ai/rms-promotions-extension/cart-logic` for use by `rms-cart-orchestrator` and other consumers
 
 ## Requirements
 
 - Node.js >= 20
-- `@medusajs/medusa` = 2.15.2
-- `@medusajs/framework` = 2.15.2
+- `@medusajs/medusa` = 2.16.0
+- `@medusajs/framework` = 2.16.0
 - PostgreSQL (Medusa's standard database)
+
+### Runtime Dependencies
+
+| Package | Version | Purpose |
+|---|---|---|
+| `@retailos-ai/rms-access` | ^1.2.3 | RBAC authentication and permission checks for v1 routes |
 
 ## Installation
 
@@ -490,6 +499,16 @@ All endpoints are admin-only. Each resource supports single-item CRUD and `/batc
 | `DELETE` | `/admin/cart-adjustments/:cart_id/:id` | Delete adjustment |
 | `PATCH/DELETE` | `/admin/cart-adjustments/:cart_id/batch` | Bulk operations |
 
+### Cart Adjustments (v1 — RBAC)
+
+Scoped routes authenticated via `@retailos-ai/rms-access` with RBAC permission checks. Same functionality as the admin routes but accessible to non-admin users with appropriate RBAC roles.
+
+| Method | Path | RBAC | Description |
+|---|---|---|---|
+| `GET` | `/v1/cart-adjustments/:cart_id` | read | List adjustments for a cart |
+| `POST` | `/v1/cart-adjustments/:cart_id` | create | Create adjustment |
+| `DELETE` | `/v1/cart-adjustments/:cart_id/:id` | remove | Delete adjustment |
+
 ## Project Structure
 
 ```
@@ -506,6 +525,7 @@ src/
       promotion-ext-rule-groups/   REST routes, validators, query config
       promotion-ext-rules/         REST routes, validators, query config
       cart-adjustments/            Manual adjustment CRUD per cart
+    v1/cart-adjustments/             RBAC-scoped proxy routes for cart adjustments (read, create, delete)
     store/carts/
       [id]/line-items/             Override: add/update/delete item with sync auto-apply + adjustments
       [id]/promotions/             Override: promo code entry with sync non-standard adjustments
@@ -516,6 +536,9 @@ src/
     adjustment-calculator.ts       Bundle and buy-get repeat computation (reads from application_method)
     target-rule-evaluator.ts       Filters eligible cart items by target rules
     adjustment-spread.ts           Proportional distribution of cart-wide adjustments
+    cart-logic-exports.ts             Barrel export of cart logic functions for external consumers
+    cart-route-handlers.ts            Extracted route override logic (add/update/delete item, add/remove promotions)
+    cart-updated-handler.ts           Extracted subscriber logic for cart.updated events
     compute-non-standard-adjustments.ts  Shared: computes bundle/buyget adjustments, merges with native
     evaluate-auto-apply-promotions.ts    Shared: evaluates auto-apply rules, adds/removes promos
   modules/promotion-ext/
@@ -531,6 +554,7 @@ src/
     promotion-restored.ts          Restores soft-deleted config/groups/rules on promotion.restored
     cart-completed.ts              Cleans up ext adjustments when a cart completes (order placed)
   types/                           TypeScript types for HTTP payloads and responses
+    rbac.ts                         RBAC module declarations for @retailos-ai/rms-access integration
   workflows/promotion-ext/         Medusa workflows for CRUD (used by API routes)
 docs/
   metadata-promotion-enforcement/
