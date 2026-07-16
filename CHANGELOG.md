@@ -1,5 +1,11 @@
 # @retailos-ai/rms-promotions-extension
 
+## 1.3.1
+
+### Patch Changes
+
+- 941668d: Move @retailos-ai/rms-access from dependencies to devDependencies + peerDependencies
+
 ## 1.3.0
 
 ### Minor Changes
