@@ -1,6 +1,6 @@
 ---
 name: @retailos-ai/rms-promotions-extension
-version: 1.3.0
+version: 1.3.1
 language: TypeScript
 license: MIT
 entry: src/modules/promotion-ext/index.ts
@@ -14,11 +14,11 @@ repo: https://github.com/RetailOs-Rms-Plugins/rms-promotions-plugin.git
 # L58   [QUICKSTART]  —  Minimal working example with curl
 # L83   [USAGE]       —  Rule fields, promotion modes, compatibility matrix, enforcement layers
 # L178  [IMPLEMENT]   —  Consumer integration recipes: API + UI guides with full examples
-# L423  [CONFIG]      —  Promotion ext config fields and mode_config shapes
-# L450  [STRUCTURE]   —  File and directory layout with route overrides and shared libs
-# L502  [API]         —  All REST endpoints with methods and paths
-# L538  [DEPS]        —  Key dependencies
-# L551  [DEV]         —  Development setup, test, and build commands
+# L424  [CONFIG]      —  Promotion ext config fields and mode_config shapes
+# L451  [STRUCTURE]   —  File and directory layout with route overrides and shared libs
+# L505  [API]         —  All REST endpoints with methods and paths
+# L541  [DEPS]        —  Key dependencies
+# L554  [DEV]         —  Development setup, test, and build commands
 
 ## [OVERVIEW]
 
@@ -405,6 +405,7 @@ When to use: another plugin (e.g. rms-cart-orchestrator) needs to reuse this plu
 import {
   evaluateAutoApplyPromotions,
   computeNonStandardAdjustments,
+  recalcStandardAdjustments,
   cartUpdatedHandler,
   validateCartPromotions,
   validateCheckout,
@@ -472,6 +473,7 @@ src/lib/adjustment-calculator.ts: Bundle and buy-get repeat computation
 src/lib/target-rule-evaluator.ts: Filters eligible cart items by Medusa target rules (normalizes full-path attributes like "items.product.id")
 src/lib/adjustment-spread.ts: Proportional distribution of cart-wide adjustments
 src/lib/compute-non-standard-adjustments.ts: Shared function — computes bundle/buyget adjustments, manages ext rows, merges with native adjustments via setLineItemAdjustments. After merging, calls restoreEvictedStandardPromos to recover standard promos removed by Medusa's budget contamination (see ADR-0009). Includes per-cart in-memory lock and ext row dedup. Accepts `insideHook` option to skip updateCartPromotionsWorkflow calls when running inside a workflow hook (prevents deadlock — see ADR-0007). Uses raw promotion code (not prefixed) for adjustments.
+src/lib/recalc-standard-adjustments.ts: Corrects native Medusa promotion adjustments after tier repricing. Percentage promos: recalculates amount using repriced unit_price. Fixed promos: caps amount at item subtotal. Must run AFTER repriceCartByQuantityTiers and BEFORE computeNonStandardAdjustments. Only touches native adjustments (promotion_id present, provider_id absent). See ADR-0010.
 src/lib/evaluate-auto-apply-promotions.ts: Shared function — evaluates auto_apply configs against cart state, adds/removes promos via updateCartPromotionsWorkflow. Called from route overrides (after lock released) and async subscriber. CANNOT be called from workflow hooks (deadlocks — see ADR-0007).
 src/lib/restore-evicted-standard-promos.ts: Detects standard auto-apply promos evicted from cart by Medusa's shared budget contamination, re-links them via remote link module, computes their adjustments independently with a clean context (fresh budget), returns adjustments for merging. See ADR-0009.
 src/modules/promotion-ext/models/: MikroORM entities (4 tables)
@@ -488,7 +490,7 @@ src/types/: HTTP payload and response TypeScript types
 src/types/rbac.ts: RBAC module declarations for @retailos-ai/rms-access
 src/workflows/promotion-ext/: Medusa workflows for CRUD operations
 docs/metadata-promotion-enforcement/CONTEXT.md: Domain glossary
-docs/metadata-promotion-enforcement/adr/: 9 Architecture Decision Records:
+docs/metadata-promotion-enforcement/adr/: 10 Architecture Decision Records:
   ADR-0001: Three-layer promotion enforcement
   ADR-0002: Plugin-owned auto-promotion engine (not Medusa's is_automatic)
   ADR-0003: Native PromotionRule with setPromotionContext for brand/manufacturer targeting
@@ -498,6 +500,7 @@ docs/metadata-promotion-enforcement/adr/: 9 Architecture Decision Records:
   ADR-0007: Synchronous cart promotion evaluation via route overrides (includes insideHook deadlock fix)
   ADR-0008: Line item adjustment field parity with Medusa (is_tax_inclusive, metadata, code prefix removal)
   ADR-0009: Restore evicted standard promos after budget contamination from non-standard native values
+  ADR-0010: Recalculate standard promo adjustments after tier repricing (percentage recalc + fixed-amount capping)
 
 ## [API]
 

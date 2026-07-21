@@ -17,6 +17,7 @@ Medusa's native promotion system handles discount calculation well, but its elig
 - **Normalized storage**: four dedicated DB tables with proper FK cascades, enabling SQL-level filtering
 - **Metadata on all models**: arbitrary JSON metadata on configs, rule groups, rules, and cart adjustments
 - **RBAC-scoped v1 routes**: `/v1/cart-adjustments` endpoints authenticated via `@retailos-ai/rms-access` with read/create/remove RBAC checks
+- **Post-repricing adjustment correction**: recalculates native Medusa promotion adjustments after tier repricing changes item prices (percentage recalc + fixed-amount capping)
 - **Cart logic barrel export**: reusable functions exported via `@retailos-ai/rms-promotions-extension/cart-logic` for use by `rms-cart-orchestrator` and other consumers
 
 ## Requirements
@@ -540,6 +541,7 @@ src/
     cart-route-handlers.ts            Extracted route override logic (add/update/delete item, add/remove promotions)
     cart-updated-handler.ts           Extracted subscriber logic for cart.updated events
     compute-non-standard-adjustments.ts  Shared: computes bundle/buyget adjustments, merges with native
+    recalc-standard-adjustments.ts       Shared: corrects native promo adjustments after tier repricing (see ADR-0010)
     evaluate-auto-apply-promotions.ts    Shared: evaluates auto-apply rules, adds/removes promos
   modules/promotion-ext/
     models/                        MikroORM entities for 4 DB tables
@@ -559,7 +561,7 @@ src/
 docs/
   metadata-promotion-enforcement/
     CONTEXT.md                     Domain glossary
-    adr/                           Architecture Decision Records (8 ADRs — see below)
+    adr/                           Architecture Decision Records (10 ADRs — see below)
 ```
 
 ## Contributing
