@@ -61,40 +61,44 @@ The `applyExtAdjustmentsToCart` inner function does call `setLineItemAdjustments
 - **Fixed amount** promotions — amount is absolute, not price-dependent (though the discount might still be conceptually "wrong" if it was intended relative to tier price)
 - **Products without quantity tier pricing** — no repricing happens, so native calculation is correct
 
-## Proposed Fix
+## Fix — `recalcStandardAdjustments`
 
-Add a new function (e.g. `recalcStandardAdjustmentsAfterReprice`) that runs in the cart-orchestrator hook **after** `repriceCartByQuantityTiers` and **before** `computeNonStandardAdjustments`:
+**Status:** Implemented in `src/lib/recalc-standard-adjustments.ts` (see ADR-0010)
+
+Runs in the cart-orchestrator hook **after** `repriceCartByQuantityTiers` and **before** `computeNonStandardAdjustments`:
 
 ```
-Hook execution order (after fix):
+Hook execution order:
   → evaluateAutoApplyPromotions
   → repriceCartByQuantityTiers
-  → recalcStandardAdjustmentsAfterReprice   ← NEW
+  → recalcStandardAdjustments               ← FIX
   → computeNonStandardAdjustments
 ```
 
-This function should:
+The function:
 
-1. Read the cart's current line item adjustments (written by Medusa with wrong amounts)
-2. Read linked promotions and identify which are `application_method.type: "percentage"`
-3. For each percentage promo adjustment: recalculate `amount = (percentage / 100) x repriced_unit_price x quantity`
-4. For fixed-amount promos: leave as-is (or reconsider if they should also be recalculated)
-5. Write corrected adjustments via `cartModule.setLineItemAdjustments` or `cartModule.updateLineItemAdjustments`
+1. Reads all line item adjustments on the cart (placed by Medusa's native calculation)
+2. Filters to only native promo adjustments (`promotion_id` present, `provider_id` absent)
+3. Queries those promotions to find their type (percentage or fixed)
+4. For percentage promos: recalculates `amount = (percentage / 100) × unit_price × quantity` using the repriced price
+5. For fixed-amount promos: caps the adjustment at `unit_price × quantity` when the discount exceeds the repriced item subtotal
+6. Updates only adjustments whose amounts actually changed
 
-### Where this code should live
+### Why only native Medusa adjustments
 
-- **New function** in `rms-promotions-plugin` (e.g. `src/lib/recalc-standard-adjustments.ts`), exported via `./cart-logic`
+Our custom modes (bundle, buy-get-repeat) are calculated by `computeNonStandardAdjustments`, which runs **after** this function. At the point `recalcStandardAdjustments` executes, those custom adjustments don't exist on the cart items yet. No risk of touching adjustments that already use correct prices.
+
+### Design decisions
+
+- **Trusts Medusa's item targeting** — doesn't re-evaluate `target_rules` or `allocation`, only fixes the dollar amounts on existing adjustments
+- **Uses `updateLineItemAdjustments`** (not `setLineItemAdjustments`) — patches only changed amounts without overwriting all adjustments
+- **Skips unchanged amounts** — avoids unnecessary writes when no repricing occurred
+
+### Where this code lives
+
+- **Function:** `src/lib/recalc-standard-adjustments.ts`, exported via `./cart-logic`
 - **Called from** `rms-cart-orchestrator` `src/subscribers/sync-cart-plugins.ts`
 - Also needs to be called in `src/subscribers/cart-updated.ts` (the fallback subscriber)
-
-### Key considerations
-
-- Only recalculate when repricing actually changed a price (avoid unnecessary overwrites)
-- Handle `allocation: "each"` vs `allocation: "across"` correctly
-- Respect `max_quantity` on the application method
-- Respect `target_rules` — only items matching the promo's target rules should have adjustments
-- The `cart.updated` fallback subscriber also needs this fix
-- Test with: percentage promos, fixed promos, mixed tier + non-tier items, multiple promos on same cart
 
 ## Relevant Source Files
 
