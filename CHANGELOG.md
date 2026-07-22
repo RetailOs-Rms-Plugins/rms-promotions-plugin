@@ -1,5 +1,11 @@
 # @retailos-ai/rms-promotions-extension
 
+## 1.3.3
+
+### Patch Changes
+
+- 8d07eb8: fix: use upsertLineItemAdjustments instead of non-existent updateLineItemAdjustments in recalcStandardAdjustments
+
 ## 1.3.2
 
 ### Patch Changes
