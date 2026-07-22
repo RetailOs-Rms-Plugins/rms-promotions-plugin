@@ -6,12 +6,12 @@ function createMockContainer(overrides: {
 } = {}) {
   const { cartItems = [], promotions = [] } = overrides
 
-  const updateLineItemAdjustmentsCalls: any[][] = []
+  const upsertLineItemAdjustmentsCalls: any[][] = []
 
   const cartModule = {
     retrieveCart: jest.fn().mockResolvedValue({ items: cartItems }),
-    updateLineItemAdjustments: jest.fn().mockImplementation((_cartId, updates) => {
-      updateLineItemAdjustmentsCalls.push(updates)
+    upsertLineItemAdjustments: jest.fn().mockImplementation((updates) => {
+      upsertLineItemAdjustmentsCalls.push(updates)
       return Promise.resolve()
     }),
   }
@@ -31,12 +31,12 @@ function createMockContainer(overrides: {
     }),
   }
 
-  return { container, cartModule, query, updateLineItemAdjustmentsCalls }
+  return { container, cartModule, query, upsertLineItemAdjustmentsCalls }
 }
 
 describe("recalcStandardAdjustments", () => {
   it("recalculates percentage adjustment using repriced unit_price", async () => {
-    const { container, updateLineItemAdjustmentsCalls } = createMockContainer({
+    const { container, upsertLineItemAdjustmentsCalls } = createMockContainer({
       cartItems: [
         {
           id: "item_1",
@@ -64,15 +64,16 @@ describe("recalcStandardAdjustments", () => {
 
     await recalcStandardAdjustments("cart_1", container)
 
-    expect(updateLineItemAdjustmentsCalls).toHaveLength(1)
-    const updates = updateLineItemAdjustmentsCalls[0]
+    expect(upsertLineItemAdjustmentsCalls).toHaveLength(1)
+    const updates = upsertLineItemAdjustmentsCalls[0]
     expect(updates).toHaveLength(1)
     expect(updates[0].id).toBe("adj_1")
+    expect(updates[0].item_id).toBe("item_1")
     expect(updates[0].amount).toBe(240) // correct: 10% of 800 × 3
   })
 
   it("does not touch fixed-amount adjustments", async () => {
-    const { container, updateLineItemAdjustmentsCalls } = createMockContainer({
+    const { container, upsertLineItemAdjustmentsCalls } = createMockContainer({
       cartItems: [
         {
           id: "item_1",
@@ -100,11 +101,11 @@ describe("recalcStandardAdjustments", () => {
 
     await recalcStandardAdjustments("cart_1", container)
 
-    expect(updateLineItemAdjustmentsCalls).toHaveLength(0)
+    expect(upsertLineItemAdjustmentsCalls).toHaveLength(0)
   })
 
   it("skips items with no adjustments", async () => {
-    const { container, updateLineItemAdjustmentsCalls } = createMockContainer({
+    const { container, upsertLineItemAdjustmentsCalls } = createMockContainer({
       cartItems: [
         {
           id: "item_1",
@@ -118,11 +119,11 @@ describe("recalcStandardAdjustments", () => {
 
     await recalcStandardAdjustments("cart_1", container)
 
-    expect(updateLineItemAdjustmentsCalls).toHaveLength(0)
+    expect(upsertLineItemAdjustmentsCalls).toHaveLength(0)
   })
 
   it("only recalculates adjustments that actually changed", async () => {
-    const { container, updateLineItemAdjustmentsCalls } = createMockContainer({
+    const { container, upsertLineItemAdjustmentsCalls } = createMockContainer({
       cartItems: [
         {
           id: "item_1",
@@ -150,11 +151,11 @@ describe("recalcStandardAdjustments", () => {
 
     await recalcStandardAdjustments("cart_1", container)
 
-    expect(updateLineItemAdjustmentsCalls).toHaveLength(0)
+    expect(upsertLineItemAdjustmentsCalls).toHaveLength(0)
   })
 
   it("handles multiple items with mixed repriced and non-repriced prices", async () => {
-    const { container, updateLineItemAdjustmentsCalls } = createMockContainer({
+    const { container, upsertLineItemAdjustmentsCalls } = createMockContainer({
       cartItems: [
         {
           id: "item_1",
@@ -197,8 +198,8 @@ describe("recalcStandardAdjustments", () => {
 
     await recalcStandardAdjustments("cart_1", container)
 
-    expect(updateLineItemAdjustmentsCalls).toHaveLength(1)
-    const updates = updateLineItemAdjustmentsCalls[0]
+    expect(upsertLineItemAdjustmentsCalls).toHaveLength(1)
+    const updates = upsertLineItemAdjustmentsCalls[0]
     // only item_1 should be updated, item_2 is already correct
     expect(updates).toHaveLength(1)
     expect(updates[0].id).toBe("adj_1")
@@ -206,7 +207,7 @@ describe("recalcStandardAdjustments", () => {
   })
 
   it("caps fixed-amount adjustment when it exceeds repriced item subtotal", async () => {
-    const { container, updateLineItemAdjustmentsCalls } = createMockContainer({
+    const { container, upsertLineItemAdjustmentsCalls } = createMockContainer({
       cartItems: [
         {
           id: "item_1",
@@ -234,15 +235,15 @@ describe("recalcStandardAdjustments", () => {
 
     await recalcStandardAdjustments("cart_1", container)
 
-    expect(updateLineItemAdjustmentsCalls).toHaveLength(1)
-    const updates = updateLineItemAdjustmentsCalls[0]
+    expect(upsertLineItemAdjustmentsCalls).toHaveLength(1)
+    const updates = upsertLineItemAdjustmentsCalls[0]
     expect(updates).toHaveLength(1)
     expect(updates[0].id).toBe("adj_1")
     expect(updates[0].amount).toBe(400) // capped at item subtotal
   })
 
   it("does not touch fixed-amount adjustment when it fits within repriced price", async () => {
-    const { container, updateLineItemAdjustmentsCalls } = createMockContainer({
+    const { container, upsertLineItemAdjustmentsCalls } = createMockContainer({
       cartItems: [
         {
           id: "item_1",
@@ -270,6 +271,6 @@ describe("recalcStandardAdjustments", () => {
 
     await recalcStandardAdjustments("cart_1", container)
 
-    expect(updateLineItemAdjustmentsCalls).toHaveLength(0)
+    expect(upsertLineItemAdjustmentsCalls).toHaveLength(0)
   })
 })

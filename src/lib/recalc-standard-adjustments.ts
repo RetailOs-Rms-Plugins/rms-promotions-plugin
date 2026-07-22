@@ -56,7 +56,7 @@ export async function recalcStandardAdjustments(
 
   if (!percentagePromos.size && !fixedPromos.size) return
 
-  const updates: { id: string; amount: number }[] = []
+  const updates: { id: string; item_id: string; amount: number }[] = []
 
   for (const adj of promoAdjustments) {
     const item = adj._item
@@ -68,17 +68,17 @@ export async function recalcStandardAdjustments(
     if (percentage != null) {
       const correctAmount = (percentage / 100) * itemSubtotal
       if (correctAmount !== adj.amount) {
-        updates.push({ id: adj.id, amount: correctAmount })
+        updates.push({ id: adj.id, item_id: item.id, amount: correctAmount })
       }
       continue
     }
 
     if (fixedPromos.has(adj.promotion_id) && adj.amount > itemSubtotal) {
-      updates.push({ id: adj.id, amount: itemSubtotal })
+      updates.push({ id: adj.id, item_id: item.id, amount: itemSubtotal })
     }
   }
 
   if (updates.length) {
-    await cartModule.updateLineItemAdjustments(cartId, updates)
+    await cartModule.upsertLineItemAdjustments(updates)
   }
 }
