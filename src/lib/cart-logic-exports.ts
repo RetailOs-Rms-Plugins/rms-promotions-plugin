@@ -6,6 +6,7 @@ export { cartUpdatedHandler } from "./cart-updated-handler"
 export { validateCartPromotions } from "./validate-cart-promotions"
 export { validateCheckout } from "./validate-checkout"
 export { cleanupCartExtAdjustments } from "./cleanup-cart-ext-adjustments"
+export { enrichCartPromotionsWithAutoApply } from "./enrich-cart-promotions"
 export { refetchCart } from "./refetch-cart"
 export {
   handleAddLineItem,
