@@ -1,5 +1,11 @@
 # @retailos-ai/rms-promotions-extension
 
+## 1.4.0
+
+### Minor Changes
+
+- 70bb864: feat: add enrichCartPromotionsWithAutoApply to expose auto_apply in store cart responses
+
 ## 1.3.3
 
 ### Patch Changes
