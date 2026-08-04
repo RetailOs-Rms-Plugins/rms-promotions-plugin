@@ -1,5 +1,11 @@
 # @retailos-ai/rms-promotions-extension
 
+## 1.4.1
+
+### Patch Changes
+
+- 1dfa6c1: Fix duplicate standard promotion adjustments caused by race between workflow hook and cart.updated subscriber. Deduplicates preserved+restored adjustments by promotion_id+item_id before scaling and capping.
+
 ## 1.4.0
 
 ### Minor Changes
