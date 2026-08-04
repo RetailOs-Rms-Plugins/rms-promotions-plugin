@@ -295,8 +295,16 @@ async function applyExtAdjustmentsToCart(
   }
 
   const allStandardAdjs = [...preservedAdjustments, ...restoredAdjustments]
+  const seenStandard = new Map<string, (typeof allStandardAdjs)[0]>()
+  for (const adj of allStandardAdjs) {
+    const key = `${adj.promotion_id ?? ("id" in adj ? adj.id : adj.code)}:${adj.item_id}`
+    if (!seenStandard.has(key)) {
+      seenStandard.set(key, adj)
+    }
+  }
+  const dedupedStandardAdjs = Array.from(seenStandard.values())
   const scaledStandardAdjs = await scalePercentageAdjustmentsForBundleRemaining(
-    allStandardAdjs,
+    dedupedStandardAdjs,
     customAdjustments,
     itemSubtotals,
     itemTaxExclSubtotals,
