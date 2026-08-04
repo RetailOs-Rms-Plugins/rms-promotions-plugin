@@ -25,6 +25,7 @@ Single source of truth for all bug fixes in the promotion plugin. Each entry rec
 | BF-013 | `scale-percentage-adjustments.unit.spec.ts` | None |
 | BF-014 | None | `zero-adjustment-promo-bugs.spec.ts` — BF-014 describe |
 | BF-015 | `compute-non-standard-adjustments.unit.spec.ts` — 3 dedup tests | None |
+| BF-016 | None | None — requires concurrent callers to reproduce |
 
 ---
 
@@ -33,7 +34,7 @@ Single source of truth for all bug fixes in the promotion plugin. Each entry rec
 | File | Fix IDs |
 |------|---------|
 | `src/lib/adjustment-calculator.ts` | BF-001, BF-009, BF-010, BF-012 |
-| `src/lib/compute-non-standard-adjustments.ts` | BF-001, BF-002, BF-008, BF-012, BF-013, BF-015 |
+| `src/lib/compute-non-standard-adjustments.ts` | BF-001, BF-002, BF-008, BF-012, BF-013, BF-015, BF-016 |
 | `src/lib/restore-evicted-standard-promos.ts` | BF-003, BF-008, BF-010, BF-012, BF-014 |
 | `src/lib/evaluate-auto-apply-promotions.ts` | BF-002, BF-003 |
 | `src/subscribers/sync-non-standard-adjustments.ts` | BF-002, BF-008 |
@@ -343,6 +344,7 @@ BF-007 (bundle_size=1) — independent
 BF-010 (tax basis) — independent
 BF-011 (admin routes) — independent
 BF-015 (manual adjustment duplication) — independent
+BF-016 (standard adjustment duplication — same class as BF-002/BF-006)
 ```
 
 ---
@@ -390,3 +392,26 @@ if (cartExtAdjCodes.has(adj.code)) continue
 **Reverts if removed:** Manual and ext-tracked adjustments duplicate on every cart mutation. Discount inflates by 1× per mutation. Affects any store using cart-wide manual adjustments (Simply integration, admin manual discounts).
 
 **Safe for standard promotions:** Standard promotion adjustments have `promotion_id` set and their `code` is the promotion code — not a `MANUAL_*` or ext-tracked code that appears in `cart_ext_adjustment`. The filter only removes adjustments whose codes are explicitly tracked in the plugin's own table.
+
+---
+
+## BF-016: Standard auto-apply adjustments duplicated during rapid cart mutations
+
+**Date:** 2026-08-04
+**Severity:** Medium
+**Reported by:** Client (haturki) — storefront showing 3× identical adjustments on single line item
+**GitHub:** #99
+
+**Symptom:** Standard auto-apply promotion (percentage, allocation=each) produces 2-3 identical adjustments on the same line item during rapid storefront interactions. State oscillates — duplicates appear, disappear on refresh, reappear — without user action. Not reproducible via slow sequential API calls (Postman).
+
+**Root cause:** Race between two unlocked writers. The `beforeRefreshingPaymentCollection` workflow hook (inside distributed lock) and the `cart.updated` subscriber (no lock) both call `applyExtAdjustmentsToCart`. When rapid mutations overlap, the subscriber from mutation N runs concurrently with mutation N+1's workflow. Both read the cart, both build adjustment lists from `preservedAdjustments` + `restoredAdjustments`, and both call `setLineItemAdjustments` — without deduplicating by `promotion_id + item_id`. The preserved array carries adjustments already on the cart (including ones written by a previous run), and restored adds freshly computed ones. Without dedup, the same promo accumulates multiple adjustments on the same item across runs.
+
+Frontend amplifies visibility: storefront uses local-first IndexedDB (Dexie) with optimistic updates and no request queuing. Each API response rewrites all items' adjustments via `bulkSyncAdjustments`, causing the UI to oscillate between responses showing different intermediate states.
+
+**Fix:** Deduplicate `allStandardAdjs` (merged preserved + restored) by `promotion_id + item_id` before scaling and capping. First occurrence wins (preserved, which carries the existing adjustment ID). A single promotion should never have 2+ adjustments on the same line item.
+
+**Files changed:** `compute-non-standard-adjustments.ts` (dedup in `applyExtAdjustmentsToCart`).
+
+**Reverts if removed:** Standard auto-apply adjustments duplicate during concurrent hook+subscriber execution. Affects rapid storefront interactions on carts with auto-apply standard promotions.
+
+**Interaction:** Same class of bug as BF-002/BF-006 (concurrent writers). BF-002 moved logic into the hook but kept the subscriber as async fallback — this fix makes the shared function idempotent regardless of concurrent callers.
