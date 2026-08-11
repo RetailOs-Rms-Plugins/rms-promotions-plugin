@@ -13,6 +13,7 @@ Medusa's native promotion system handles discount calculation well, but its elig
 - **Promotion modes**: standard (Medusa native), bundle pricing, and buy-get repeat — with item caps via `max_quantity`
 - **Manual cart adjustments**: operator-created discounts/surcharges per cart, item-level or cart-wide
 - **Admin widget**: visual rule editor and promotion mode configuration injected into the Medusa promotion detail page
+- **Order edit custom items**: admin widget on the order detail page to add custom line items (including negative-price discounts) to orders via the order-edit workflow — a temporary workaround for the order-edit promotion gap
 - **Full REST API**: CRUD + batch endpoints for configs, rule groups, rules, and cart adjustments
 - **Normalized storage**: four dedicated DB tables with proper FK cascades, enabling SQL-level filtering
 - **Metadata on all models**: arbitrary JSON metadata on configs, rule groups, rules, and cart adjustments
@@ -305,6 +306,29 @@ Amount follows Medusa's convention: positive = discount, negative = surcharge. C
 
 Set `is_tax_inclusive: true` when the amount already includes tax (e.g., in tax-inclusive regions). Defaults to `false`. When omitted or `false`, Medusa adds tax on top of the discount amount, which can produce incorrect totals in tax-inclusive stores.
 
+### Order Edit Custom Items (Temporary)
+
+When an order is edited (add/remove items), the plugin's custom promotions don't recalculate — they only hook into cart workflows. As a workaround, store managers can add custom line items with negative prices to manually represent missed discounts.
+
+A "Custom Items" widget on the order detail page (`order.details.after`) provides this:
+
+1. Click the 3-dot menu → "Add custom item"
+2. Fill in Title (e.g., "10% off"), Unit Price (negative for discounts), Quantity
+3. Submit — the item is added to the current order-edit session (or a new one is created)
+4. Confirm the edit from Medusa's "Order edit" container
+
+**Guard rails:** the button is disabled on paid (captured/refunded) or fulfilled orders. Existing promotion adjustments on other items are not affected — the `carry_over_promotions` flag stays null, so no recalculation occurs.
+
+```bash
+# API: add custom item to an active order-edit session
+curl -X POST /admin/order-edits/:order_id/custom-items \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "title": "10% off", "unit_price": -2000, "quantity": 1 }'
+```
+
+This is a temporary feature — the long-term solution is to hook the plugin's promotion logic into the order-edit flow directly.
+
 ### Three-Layer Enforcement
 
 | Layer | When | Mechanism | Effect on failure |
@@ -500,6 +524,12 @@ All endpoints are admin-only. Each resource supports single-item CRUD and `/batc
 | `DELETE` | `/admin/cart-adjustments/:cart_id/:id` | Delete adjustment |
 | `PATCH/DELETE` | `/admin/cart-adjustments/:cart_id/batch` | Bulk operations |
 
+### Order Edit Custom Items
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/admin/order-edits/:id/custom-items` | Add a custom line item (title + unit_price + quantity, no variant) to an active order-edit session |
+
 ### Cart Adjustments (v1 — RBAC)
 
 Scoped routes authenticated via `@retailos-ai/rms-access` with RBAC permission checks. Same functionality as the admin routes but accessible to non-admin users with appropriate RBAC roles.
@@ -519,13 +549,14 @@ src/
       rules-editor/               Drawer-based rule editor (combinator toggles, group cards, rule rows)
       promotion-mode/              Promotion mode display + edit form (bundle/buyget config)
     hooks/                         React Query hooks for all REST resources
-    widgets/                       promotion-rules-widget.tsx — injected at promotion.details.after
+    widgets/                       promotion-rules-widget.tsx (promotion.details.after), order-custom-items-widget.tsx (order.details.after)
   api/
     admin/
       promotion-ext-configs/       REST routes, validators, query config, mode validation
       promotion-ext-rule-groups/   REST routes, validators, query config
       promotion-ext-rules/         REST routes, validators, query config
       cart-adjustments/            Manual adjustment CRUD per cart
+      order-edits/[id]/custom-items/  Custom line items for order edits (no variant_id)
     v1/cart-adjustments/             RBAC-scoped proxy routes for cart adjustments (read, create, delete)
     store/carts/
       [id]/line-items/             Override: add/update/delete item with sync auto-apply + adjustments
