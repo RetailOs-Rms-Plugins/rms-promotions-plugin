@@ -29,14 +29,30 @@ export const POST = async (
     throw new MedusaError(MedusaError.Types.NOT_FOUND, `Order with id ${id} not found`)
   }
 
-  if (order.payment_status !== "not_paid") {
+  const PAID_STATUSES = [
+    "captured",
+    "partially_captured",
+    "partially_refunded",
+    "refunded",
+  ]
+
+  if (PAID_STATUSES.includes(order.payment_status)) {
     throw new MedusaError(
       MedusaError.Types.INVALID_DATA,
       "Cannot add custom items to a paid order"
     )
   }
 
-  if (order.fulfillment_status !== "not_fulfilled") {
+  const FULFILLED_STATUSES = [
+    "fulfilled",
+    "partially_fulfilled",
+    "partially_shipped",
+    "shipped",
+    "partially_delivered",
+    "delivered",
+  ]
+
+  if (FULFILLED_STATUSES.includes(order.fulfillment_status)) {
     throw new MedusaError(
       MedusaError.Types.INVALID_DATA,
       "Cannot add custom items to a fulfilled order"
