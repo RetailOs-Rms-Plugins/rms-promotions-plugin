@@ -1,6 +1,6 @@
 ---
 name: @retailos-ai/rms-promotions-extension
-version: 1.3.2
+version: 1.4.1
 language: TypeScript
 license: MIT
 entry: src/modules/promotion-ext/index.ts
@@ -10,15 +10,15 @@ repo: https://github.com/RetailOs-Rms-Plugins/rms-promotions-plugin.git
 
 # INDEX
 # L23   [OVERVIEW]    —  What this plugin does and its core architecture
-# L35   [INSTALL]     —  Requirements and installation commands
-# L58   [QUICKSTART]  —  Minimal working example with curl
-# L83   [USAGE]       —  Rule fields, promotion modes, compatibility matrix, enforcement layers
-# L178  [IMPLEMENT]   —  Consumer integration recipes: API + UI guides with full examples
-# L425  [CONFIG]      —  Promotion ext config fields and mode_config shapes
-# L452  [STRUCTURE]   —  File and directory layout with route overrides and shared libs
-# L507  [API]         —  All REST endpoints with methods and paths
-# L543  [DEPS]        —  Key dependencies
-# L556  [DEV]         —  Development setup, test, and build commands
+# L37   [INSTALL]     —  Requirements and installation commands
+# L60   [QUICKSTART]  —  Minimal working example with curl
+# L85   [USAGE]       —  Rule fields, promotion modes, compatibility matrix, enforcement layers
+# L180  [IMPLEMENT]   —  Consumer integration recipes: API + UI guides with full examples
+# L427  [CONFIG]      —  Promotion ext config fields and mode_config shapes
+# L454  [STRUCTURE]   —  File and directory layout with route overrides and shared libs
+# L509  [API]         —  All REST endpoints with methods and paths
+# L547  [DEPS]        —  Key dependencies
+# L560  [DEV]         —  Development setup, test, and build commands
 
 ## [OVERVIEW]
 
@@ -28,9 +28,11 @@ Enforcement uses a three-layer architecture: Layer 1 (Code Gate) validates synch
 
 All plugin-managed promotions must have `is_automatic: false` in Medusa. The plugin owns auto-apply logic via Layer 2.
 
-Four DB tables: `promotion_ext_config`, `promotion_ext_rule_group`, `promotion_ext_rule`, `cart_ext_adjustment`. Admin widget injected at `promotion.details.after`.
+Four DB tables: `promotion_ext_config`, `promotion_ext_rule_group`, `promotion_ext_rule`, `cart_ext_adjustment`. Admin widgets injected at `promotion.details.after` (rule editor) and `order.details.after` (custom items for order edits).
 
 All four models support arbitrary JSON metadata. A scoped `/v1/cart-adjustments` API provides RBAC-authenticated access via `@retailos-ai/rms-access`. Cart logic functions are barrel-exported via `./cart-logic` for reuse by `rms-cart-orchestrator`.
+
+Temporary feature: `POST /admin/order-edits/:id/custom-items` adds custom line items (title + price, no variant) to orders via the order-edit workflow — a manual workaround for the order-edit promotion gap (custom promotions only recalculate on carts, not order edits).
 
 ## [INSTALL]
 
@@ -539,6 +541,8 @@ DELETE /admin/cart-adjustments/:cart_id/batch — Batch delete
 POST   /v1/cart-adjustments/:cart_id — Create adjustment (RBAC: create)
 GET    /v1/cart-adjustments/:cart_id — List adjustments (RBAC: read)
 DELETE /v1/cart-adjustments/:cart_id/:id — Delete adjustment (RBAC: remove)
+
+POST   /admin/order-edits/:id/custom-items — Add custom line item { title, unit_price, quantity } to active order-edit session. Requires unpaid+unfulfilled order. No variant_id needed.
 
 ## [DEPS]
 
