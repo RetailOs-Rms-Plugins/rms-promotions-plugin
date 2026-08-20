@@ -571,7 +571,7 @@ src/
     cart-logic-exports.ts             Barrel export of cart logic functions for external consumers
     cart-route-handlers.ts            Extracted route override logic (add/update/delete item, add/remove promotions)
     cart-updated-handler.ts           Extracted subscriber logic for cart.updated events
-    enrich-cart-promotions.ts                Shared: attaches auto_apply onto cart promotions for store responses
+    enrich-cart-promotions.ts                Shared: attaches auto_apply + metadata onto cart promotions for store responses
     compute-non-standard-adjustments.ts  Shared: computes bundle/buyget adjustments, merges with native
     recalc-standard-adjustments.ts       Shared: corrects native promo adjustments after tier repricing (see ADR-0010)
     evaluate-auto-apply-promotions.ts    Shared: evaluates auto-apply rules, adds/removes promos
