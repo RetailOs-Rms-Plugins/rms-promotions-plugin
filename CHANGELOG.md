@@ -1,5 +1,11 @@
 # @retailos-ai/rms-promotions-extension
 
+## 1.6.0
+
+### Minor Changes
+
+- 5a57832: feat: add enrichCartPromotionsWithMetadata to expose promotion metadata in store cart responses
+
 ## 1.5.0
 
 ### Minor Changes
