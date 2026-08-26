@@ -6359,9 +6359,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@retailos-ai/rms-access@file:.yalc/@retailos-ai/rms-access::locator=%40retailos-ai%2Frms-promotions-extension%40workspace%3A.":
-  version: 1.2.5
-  resolution: "@retailos-ai/rms-access@file:.yalc/@retailos-ai/rms-access#.yalc/@retailos-ai/rms-access::hash=976c69&locator=%40retailos-ai%2Frms-promotions-extension%40workspace%3A."
+"@retailos-ai/rms-access@npm:^1.3.0":
+  version: 1.3.0
+  resolution: "@retailos-ai/rms-access@npm:1.3.0"
   peerDependencies:
     "@medusajs/admin-sdk": 2.19.0
     "@medusajs/cli": 2.19.0
@@ -6372,14 +6372,14 @@ __metadata:
     "@medusajs/test-utils": 2.19.0
     "@medusajs/types": 2.19.0
     "@medusajs/ui": 4.2.1
-    "@retailos-ai/rms-medusa-ui": ^1.3.2
-  checksum: 10c0/7d76db8dd749a083634e8ab419ae6136bd8333a4216ee608f7b60665f66b7e0ca97249058ffb8f90ce09f4063dcaa62d00eeb55ffca399bf90b09a980842da8e
+    "@retailos-ai/rms-medusa-ui": ^1.4.0
+  checksum: 10c0/483a1362a44ea3a3135f7fb9034c253c51040d8e9b8bc026cb3480b03436721f98aff888d42cb6dc48b0bd3108064823502c940f6e1c861c1d2f9c6cfe53524a
   languageName: node
   linkType: hard
 
-"@retailos-ai/rms-medusa-ui@file:.yalc/@retailos-ai/rms-medusa-ui::locator=%40retailos-ai%2Frms-promotions-extension%40workspace%3A.":
-  version: 1.3.2
-  resolution: "@retailos-ai/rms-medusa-ui@file:.yalc/@retailos-ai/rms-medusa-ui#.yalc/@retailos-ai/rms-medusa-ui::hash=602024&locator=%40retailos-ai%2Frms-promotions-extension%40workspace%3A."
+"@retailos-ai/rms-medusa-ui@npm:^1.4.0":
+  version: 1.4.0
+  resolution: "@retailos-ai/rms-medusa-ui@npm:1.4.0"
   peerDependencies:
     "@hookform/error-message": ^2.0.1
     "@medusajs/framework": 2.19.0
@@ -6394,7 +6394,7 @@ __metadata:
     react-dom: ^18.3.1
     react-i18next: 13.5.0
     react-router-dom: ^7.18.2
-  checksum: 10c0/3f01d8db9374000c9f0e031414d86d4a0aaf7346f0c7ac0752f5b0123a320ad1d145816d030463443cbc57b3595dee486a2d2d3947ebfd488fbc471e75294706
+  checksum: 10c0/aa8b622a0cbbed27848a8f32bc34c99017b844d528043d42e0e680d6fed5e2f5d22d58cdd57a41f093420865008f33bf288194fecb7e76ef152ccb22969fa90c
   languageName: node
   linkType: hard
 
@@ -6411,8 +6411,8 @@ __metadata:
     "@medusajs/medusa": "npm:2.19.0"
     "@medusajs/test-utils": "npm:2.19.0"
     "@medusajs/ui": "npm:4.2.1"
-    "@retailos-ai/rms-access": "file:.yalc/@retailos-ai/rms-access"
-    "@retailos-ai/rms-medusa-ui": "file:.yalc/@retailos-ai/rms-medusa-ui"
+    "@retailos-ai/rms-access": "npm:^1.3.0"
+    "@retailos-ai/rms-medusa-ui": "npm:^1.4.0"
     "@swc/core": "npm:^1.7.28"
     "@swc/jest": "npm:^0.2.39"
     "@types/jest": "npm:^30.0.0"
@@ -6436,8 +6436,8 @@ __metadata:
     "@medusajs/medusa": 2.19.0
     "@medusajs/test-utils": 2.19.0
     "@medusajs/ui": 4.2.1
-    "@retailos-ai/rms-access": ^1.2.5
-    "@retailos-ai/rms-medusa-ui": ^1.3.2
+    "@retailos-ai/rms-access": ^1.3.0
+    "@retailos-ai/rms-medusa-ui": ^1.4.0
   languageName: unknown
   linkType: soft
 

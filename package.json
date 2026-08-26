@@ -48,8 +48,8 @@
     "@medusajs/medusa": "2.19.0",
     "@medusajs/test-utils": "2.19.0",
     "@medusajs/ui": "4.2.1",
-    "@retailos-ai/rms-access": "file:.yalc/@retailos-ai/rms-access",
-    "@retailos-ai/rms-medusa-ui": "file:.yalc/@retailos-ai/rms-medusa-ui",
+    "@retailos-ai/rms-access": "^1.3.0",
+    "@retailos-ai/rms-medusa-ui": "^1.4.0",
     "@swc/core": "^1.7.28",
     "@swc/jest": "^0.2.39",
     "@types/jest": "^30.0.0",
@@ -74,8 +74,8 @@
     "@medusajs/medusa": "2.19.0",
     "@medusajs/test-utils": "2.19.0",
     "@medusajs/ui": "4.2.1",
-    "@retailos-ai/rms-access": "^1.2.5",
-    "@retailos-ai/rms-medusa-ui": "^1.3.2"
+    "@retailos-ai/rms-access": "^1.3.0",
+    "@retailos-ai/rms-medusa-ui": "^1.4.0"
   },
   "engines": {
     "node": ">=20"
