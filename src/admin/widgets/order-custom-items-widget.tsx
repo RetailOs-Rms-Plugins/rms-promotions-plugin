@@ -321,7 +321,7 @@ const OrderCustomItemsWidget = ({
 }
 
 export const config = defineWidgetConfig({
-  zone: "order.details.after",
+  zone: "order.details",
 })
 
 export default OrderCustomItemsWidget
