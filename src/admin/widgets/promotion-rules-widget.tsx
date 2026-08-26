@@ -260,7 +260,7 @@ const PromotionRulesWidget = ({ data }: DetailWidgetProps<AdminPromotion>) => {
 }
 
 export const config = defineWidgetConfig({
-  zone: "promotion.details.after",
+  zone: "promotion.details",
 })
 
 export default PromotionRulesWidget
