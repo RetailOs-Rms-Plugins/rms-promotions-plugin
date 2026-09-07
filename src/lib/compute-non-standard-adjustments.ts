@@ -294,7 +294,18 @@ async function applyExtAdjustmentsToCart(
     itemTaxExclSubtotals.set((item as any).id, taxExclSubtotal)
   }
 
-  const allStandardAdjs = [...preservedAdjustments, ...restoredAdjustments]
+  // A recomputed amount comes from a clean budget, so it supersedes whatever
+  // Medusa left on the cart for that promotion. Without this the dedupe below
+  // keeps the first entry it sees, which would be the starved amount.
+  const recomputedPromoIds = new Set(
+    restoredAdjustments.map((a) => a.promotion_id).filter(Boolean)
+  )
+  const allStandardAdjs = [
+    ...preservedAdjustments.filter(
+      (a) => !a.promotion_id || !recomputedPromoIds.has(a.promotion_id)
+    ),
+    ...restoredAdjustments,
+  ]
   const seenStandard = new Map<string, (typeof allStandardAdjs)[0]>()
   for (const adj of allStandardAdjs) {
     const key = `${adj.promotion_id ?? ("id" in adj ? adj.id : adj.code)}:${adj.item_id}`
