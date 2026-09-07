@@ -82,7 +82,12 @@ export const handleAddPromotions = async (req: MedusaRequest, res: MedusaRespons
     },
   })
 
-  await computeNonStandardAdjustments(req.params.id, req.scope)
+  // Pass the submitted codes through: Medusa drops a code that computes to
+  // zero against the shared budget, so without this the plugin cannot tell it
+  // was ever entered.
+  await computeNonStandardAdjustments(req.params.id, req.scope, {
+    submittedCodes: payload.promo_codes,
+  })
 
   const cart = await refetchCart(req.params.id, req.scope, (req as any).queryConfig.fields)
   res.status(200).json({ cart })

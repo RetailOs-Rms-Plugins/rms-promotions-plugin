@@ -42,7 +42,7 @@ export async function restoreEvictedStandardPromos(
   cartId: string,
   customModePromoIds: Set<string>,
   container: any,
-  options?: { freshlyLinkedCodes?: Set<string> }
+  options?: { freshlyLinkedCodes?: Set<string>; submittedCodes?: string[] }
 ): Promise<RestoredAdjustment[]> {
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
   const service: PromotionExtModuleService = container.resolve(PROMOTION_EXT_MODULE)
@@ -86,10 +86,28 @@ export async function restoreEvictedStandardPromos(
   const starvedPromoIds = [...linkedPromoIds].filter(
     (id) => !customModePromoIds.has(id)
   )
-  const starvedPromoIdSet = new Set(starvedPromoIds)
+
+  // A code the shopper just submitted may have been refused a link, because
+  // Medusa drops a promotion that computes to zero. Such a code is in neither
+  // the cart links nor the config table, so resolve it by code.
+  const submittedCodes = options?.submittedCodes ?? []
+  let submittedPromoIds: string[] = []
+  if (submittedCodes.length) {
+    const { data: submitted } = await query.graph({
+      entity: "promotion",
+      fields: ["id", "code"],
+      filters: { code: submittedCodes },
+    })
+    submittedPromoIds = submitted
+      .filter((p: any) => !customModePromoIds.has(p.id))
+      .map((p: any) => p.id)
+  }
+
+  // Everything here needs its amount computed again against a clean budget.
+  const recomputeIds = new Set<string>([...starvedPromoIds, ...submittedPromoIds])
 
   const candidatePromoIds = [
-    ...new Set([...standardAutoApply.map((c) => c.promotion_id), ...starvedPromoIds]),
+    ...new Set([...standardAutoApply.map((c) => c.promotion_id), ...recomputeIds]),
   ]
 
   if (!candidatePromoIds.length) return []
@@ -115,10 +133,11 @@ export async function restoreEvictedStandardPromos(
   const budgetContextCodes: string[] = []
 
   for (const promotion of promotions) {
-    // Already on the cart. Medusa validated it when it was linked, so recompute
-    // its amount on a clean budget without re-running the plugin's own rules —
-    // a typed coupon has no rule config to run.
-    if (starvedPromoIdSet.has(promotion.id)) {
+    // Already on the cart, or just submitted. Either way Medusa has already
+    // validated it, so recompute the amount on a clean budget without
+    // re-running the plugin's own rules — a typed coupon has no rule config to
+    // run, and requiring one is what hid this bug.
+    if (recomputeIds.has(promotion.id)) {
       evictedPromos.push({
         id: promotion.id,
         code: promotion.code,

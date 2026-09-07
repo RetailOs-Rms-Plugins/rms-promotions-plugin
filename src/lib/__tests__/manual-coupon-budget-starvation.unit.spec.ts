@@ -37,7 +37,10 @@ const BUNDLE_SAVING = LINE_SUBTOTAL - BUNDLE_PRICE // 8.10
 const COUPON_CLEAN_AMOUNT = LINE_SUBTOTAL * 0.5 // 69, what a clean budget yields
 const EXPECTED_COUPON = BUNDLE_PRICE * 0.5 // 64.95
 
-function createMockContainer(opts: { starvedCouponAmount?: number } = {}) {
+function createMockContainer(
+  opts: { starvedCouponAmount?: number; couponLinked?: boolean } = {}
+) {
+  const couponLinked = opts.couponLinked ?? true
   const setLineItemAdjustmentsCalls: any[][] = []
 
   const service = {
@@ -152,11 +155,14 @@ function createMockContainer(opts: { starvedCouponAmount?: number } = {}) {
           adjustments: [],
         },
       ],
-      // Both codes are linked. The coupon was accepted, it just did nothing.
-      promotions: [
-        { id: BUNDLE_PROMO_ID, code: "BUNDLE_2FOR12990" },
-        { id: COUPON_PROMO_ID, code: COUPON_CODE },
-      ],
+      // With couponLinked false, Medusa refused to attach the coupon because it
+      // computed to zero — the single-line case.
+      promotions: couponLinked
+        ? [
+            { id: BUNDLE_PROMO_ID, code: "BUNDLE_2FOR12990" },
+            { id: COUPON_PROMO_ID, code: COUPON_CODE },
+          ]
+        : [{ id: BUNDLE_PROMO_ID, code: "BUNDLE_2FOR12990" }],
       shipping_methods: [],
       customer: null,
     },
@@ -252,5 +258,37 @@ describe("typed coupon starved by a bundle promotion (Asana 1217457334283775)", 
     expect(promotionService.computeActions).toHaveBeenCalled()
     const [codes] = promotionService.computeActions.mock.calls[0]
     expect(codes).toContain(COUPON_CODE)
+  })
+  it("recovers a coupon Medusa refused to link at all", async () => {
+    // Every line was drained, so Medusa dropped the code instead of attaching
+    // it with a small amount. It reaches the plugin only as a submitted code.
+    const { container, setLineItemAdjustmentsCalls } = createMockContainer({
+      couponLinked: false,
+    })
+
+    await computeNonStandardAdjustments(CART_ID, container, {
+      submittedCodes: [COUPON_CODE],
+    })
+
+    const couponAmount = setLineItemAdjustmentsCalls[0]
+      .filter((a: any) => a.promotion_id === COUPON_PROMO_ID)
+      .reduce((sum: number, a: any) => sum + Number(a.amount), 0)
+
+    expect(couponAmount).toBeCloseTo(EXPECTED_COUPON, 2)
+  })
+
+  it("ignores an unlinked coupon when its code was not submitted", async () => {
+    // Nothing should resurrect a code the shopper did not enter.
+    const { container, setLineItemAdjustmentsCalls } = createMockContainer({
+      couponLinked: false,
+    })
+
+    await computeNonStandardAdjustments(CART_ID, container)
+
+    const couponAmount = (setLineItemAdjustmentsCalls[0] ?? [])
+      .filter((a: any) => a.promotion_id === COUPON_PROMO_ID)
+      .reduce((sum: number, a: any) => sum + Number(a.amount), 0)
+
+    expect(couponAmount).toBe(0)
   })
 })
