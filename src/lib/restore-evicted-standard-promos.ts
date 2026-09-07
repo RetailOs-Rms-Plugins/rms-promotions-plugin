@@ -12,7 +12,16 @@
  * computes their adjustments independently (clean budget), and adds them
  * to the cart's line item adjustments.
  *
- * See ADR-0009 for full context.
+ * It also recomputes standard promotions that survived on the cart but came
+ * out of that same contaminated budget with too small an amount — a typed
+ * coupon code is the common case, since `sortByBuyGetType` orders promotions
+ * by `application_method.value` descending with no regard for percentage
+ * versus fixed, so a "50% off" coupon (value 50) is always computed after a
+ * bundle whose value is a price like 129.90. Those coupons have no
+ * PromotionExtConfig at all, so they are found through the cart's promotion
+ * links rather than through the config table.
+ *
+ * See ADR-0009 for full context, and Asana 1217457334283775 for the coupon case.
  */
 
 import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils"
@@ -33,7 +42,7 @@ export async function restoreEvictedStandardPromos(
   cartId: string,
   customModePromoIds: Set<string>,
   container: any,
-  options?: { freshlyLinkedCodes?: Set<string> }
+  options?: { freshlyLinkedCodes?: Set<string>; submittedCodes?: string[] }
 ): Promise<RestoredAdjustment[]> {
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
   const service: PromotionExtModuleService = container.resolve(PROMOTION_EXT_MODULE)
@@ -42,8 +51,6 @@ export async function restoreEvictedStandardPromos(
   const standardAutoApply = allConfigs.filter(
     (c: any) => !c.promotion_mode || c.promotion_mode === "standard"
   )
-
-  if (!standardAutoApply.length) return []
 
   const { data: cartList } = await query.graph({
     entity: "cart",
@@ -71,7 +78,40 @@ export async function restoreEvictedStandardPromos(
     (cart.promotions ?? []).map((p: any) => p.id)
   )
 
-  const standardPromoIds = standardAutoApply.map((c) => c.promotion_id)
+  // Promotions already on the cart that this plugin does not compute itself —
+  // typed coupon codes, and any standard promo Medusa kept. Their amounts came
+  // out of the contaminated shared budget, so they need recomputing too, not
+  // just the ones that were unlinked outright. A typed coupon has no
+  // PromotionExtConfig at all, so it never appears in `standardAutoApply`.
+  const starvedPromoIds = [...linkedPromoIds].filter(
+    (id) => !customModePromoIds.has(id)
+  )
+
+  // A code the shopper just submitted may have been refused a link, because
+  // Medusa drops a promotion that computes to zero. Such a code is in neither
+  // the cart links nor the config table, so resolve it by code.
+  const submittedCodes = options?.submittedCodes ?? []
+  let submittedPromoIds: string[] = []
+  if (submittedCodes.length) {
+    const { data: submitted } = await query.graph({
+      entity: "promotion",
+      fields: ["id", "code"],
+      filters: { code: submittedCodes },
+    })
+    submittedPromoIds = submitted
+      .filter((p: any) => !customModePromoIds.has(p.id))
+      .map((p: any) => p.id)
+  }
+
+  // Everything here needs its amount computed again against a clean budget.
+  const recomputeIds = new Set<string>([...starvedPromoIds, ...submittedPromoIds])
+
+  const candidatePromoIds = [
+    ...new Set([...standardAutoApply.map((c) => c.promotion_id), ...recomputeIds]),
+  ]
+
+  if (!candidatePromoIds.length) return []
+
   const { data: promotions } = await query.graph({
     entity: "promotion",
     fields: [
@@ -85,7 +125,7 @@ export async function restoreEvictedStandardPromos(
       "rules.operator",
       "rules.values.value",
     ],
-    filters: { id: standardPromoIds },
+    filters: { id: candidatePromoIds },
   })
 
   const now = new Date()
@@ -93,6 +133,19 @@ export async function restoreEvictedStandardPromos(
   const budgetContextCodes: string[] = []
 
   for (const promotion of promotions) {
+    // Already on the cart, or just submitted. Either way Medusa has already
+    // validated it, so recompute the amount on a clean budget without
+    // re-running the plugin's own rules — a typed coupon has no rule config to
+    // run, and requiring one is what hid this bug.
+    if (recomputeIds.has(promotion.id)) {
+      evictedPromos.push({
+        id: promotion.id,
+        code: promotion.code,
+        is_tax_inclusive: (promotion as any).is_tax_inclusive ?? false,
+      })
+      continue
+    }
+
     if (linkedPromoIds.has(promotion.id) && !options?.freshlyLinkedCodes?.has(promotion.code)) {
       budgetContextCodes.push(promotion.code)
       continue
@@ -200,7 +253,8 @@ export async function restoreEvictedStandardPromos(
   if (!promosWithAdjustments.length) return []
 
   const promosToLink = promosWithAdjustments.filter(
-    (p) => !options?.freshlyLinkedCodes?.has(p.code)
+    (p) =>
+      !options?.freshlyLinkedCodes?.has(p.code) && !linkedPromoIds.has(p.id)
   )
 
   if (promosToLink.length) {

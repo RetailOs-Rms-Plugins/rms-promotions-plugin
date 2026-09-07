@@ -9,7 +9,17 @@ import { restoreEvictedStandardPromos } from "./restore-evicted-standard-promos"
 export async function computeNonStandardAdjustments(
   cartId: string,
   container: any,
-  options?: { appliedPromotionCodes?: string[]; freshlyLinkedCodes?: string[] }
+  options?: {
+    appliedPromotionCodes?: string[]
+    freshlyLinkedCodes?: string[]
+    /**
+     * Codes the shopper just submitted. Medusa may have refused to link one
+     * because the shared budget was already empty when it computed it, so a
+     * submitted code can be absent from both the cart links and the config
+     * table. Pass it here and it still gets recomputed on a clean budget.
+     */
+    submittedCodes?: string[]
+  }
 ): Promise<void> {
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
   const service: PromotionExtModuleService = container.resolve(PROMOTION_EXT_MODULE)
@@ -19,7 +29,12 @@ export async function computeNonStandardAdjustments(
     (c: any) => c.promotion_mode && c.promotion_mode !== "standard"
   )
 
-  if (!nonStandardConfigs.length && !options?.freshlyLinkedCodes?.length) return
+  if (
+    !nonStandardConfigs.length &&
+    !options?.freshlyLinkedCodes?.length &&
+    !options?.submittedCodes?.length
+  )
+    return
 
   const appliedCodes = await resolveAppliedCodes(cartId, query, options?.appliedPromotionCodes)
 
@@ -169,7 +184,13 @@ export async function computeNonStandardAdjustments(
     }
   }
 
-  await applyExtAdjustmentsToCart(cartId, nonStandardConfigs, container, options?.freshlyLinkedCodes)
+  await applyExtAdjustmentsToCart(
+    cartId,
+    nonStandardConfigs,
+    container,
+    options?.freshlyLinkedCodes,
+    options?.submittedCodes
+  )
 }
 
 async function resolveAppliedCodes(
@@ -191,7 +212,8 @@ async function applyExtAdjustmentsToCart(
   cartId: string,
   nonStandardConfigs: any[],
   container: any,
-  freshlyLinkedCodes?: string[]
+  freshlyLinkedCodes?: string[],
+  submittedCodes?: string[]
 ): Promise<void> {
   const service: PromotionExtModuleService = container.resolve(PROMOTION_EXT_MODULE)
   const cartExtAdjustments = await service.listCartExtAdjustments({ cart_id: cartId })
@@ -199,7 +221,13 @@ async function applyExtAdjustmentsToCart(
   const hasCustomAdjustments = cartExtAdjustments.length > 0
   const hasCustomModePromos = customModePromoIds.size > 0
 
-  if (!hasCustomAdjustments && !hasCustomModePromos && !freshlyLinkedCodes?.length) return
+  if (
+    !hasCustomAdjustments &&
+    !hasCustomModePromos &&
+    !freshlyLinkedCodes?.length &&
+    !submittedCodes?.length
+  )
+    return
 
   const cartModule = container.resolve(Modules.CART)
   const fullCart = await cartModule.retrieveCart(cartId, { relations: ["items.adjustments", "items", "items.tax_lines"] })
@@ -274,6 +302,7 @@ async function applyExtAdjustmentsToCart(
 
   const restoredAdjustments = await restoreEvictedStandardPromos(cartId, customModePromoIds, container, {
     freshlyLinkedCodes: freshlyLinkedCodes?.length ? new Set(freshlyLinkedCodes) : undefined,
+    submittedCodes: submittedCodes?.length ? submittedCodes : undefined,
   })
 
   const itemSubtotals = new Map<string, number>()
@@ -294,7 +323,18 @@ async function applyExtAdjustmentsToCart(
     itemTaxExclSubtotals.set((item as any).id, taxExclSubtotal)
   }
 
-  const allStandardAdjs = [...preservedAdjustments, ...restoredAdjustments]
+  // A recomputed amount comes from a clean budget, so it supersedes whatever
+  // Medusa left on the cart for that promotion. Without this the dedupe below
+  // keeps the first entry it sees, which would be the starved amount.
+  const recomputedPromoIds = new Set(
+    restoredAdjustments.map((a) => a.promotion_id).filter(Boolean)
+  )
+  const allStandardAdjs = [
+    ...preservedAdjustments.filter(
+      (a) => !a.promotion_id || !recomputedPromoIds.has(a.promotion_id)
+    ),
+    ...restoredAdjustments,
+  ]
   const seenStandard = new Map<string, (typeof allStandardAdjs)[0]>()
   for (const adj of allStandardAdjs) {
     const key = `${adj.promotion_id ?? ("id" in adj ? adj.id : adj.code)}:${adj.item_id}`
