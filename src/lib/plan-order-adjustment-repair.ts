@@ -14,11 +14,18 @@
  * caller passes the ids it wants gone.
  */
 
+/**
+ * Medusa hands money fields back as `BigNumber` objects, not numbers — an
+ * adjustment's `amount` arrives as `BigNumber { }` whose `valueOf()` is the
+ * number. Anything that reads these must coerce, or it silently gets NaN.
+ */
+export type MoneyValue = number | string | { valueOf(): number }
+
 export interface OrderAdjustmentRow {
   id: string
   promotion_id?: string | null
   code?: string | null
-  amount: number | string
+  amount: MoneyValue
   version?: number | null
   created_at?: string | Date | null
 }
@@ -26,20 +33,21 @@ export interface OrderAdjustmentRow {
 export interface OrderLineWithAdjustments {
   id: string
   title?: string | null
-  quantity?: number | null
-  unit_price?: number | null
+  quantity?: MoneyValue | null
+  unit_price?: MoneyValue | null
   adjustments?: OrderAdjustmentRow[] | null
 }
 
 export interface RepairGroup {
   item_id: string
   title: string | null
-  quantity: number | null
-  unit_price: number | null
+  quantity: number
+  unit_price: number
   promotion_id: string | null
   code: string | null
   row_count: number
   amount_per_row: number
+  line_subtotal: number
   recorded_discount: number
   /** newest row — never offered for deletion */
   keep_id: string
@@ -54,9 +62,13 @@ export interface RepairPlan {
   recorded_discount_total: number
 }
 
-const toNumber = (v: number | string | null | undefined): number => {
-  const n = typeof v === "string" ? Number(v) : v
-  return Number.isFinite(n) ? (n as number) : 0
+const toNumber = (v: MoneyValue | null | undefined): number => {
+  // Coerce unconditionally: this has to handle a plain number, a numeric
+  // string, and a Medusa BigNumber (via valueOf). Only checking for a string
+  // left BigNumbers falling through to Number.isFinite(object) === false,
+  // which reported every amount as 0.
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
 }
 
 const sortKey = (row: OrderAdjustmentRow): string => {
@@ -103,12 +115,13 @@ export const planOrderAdjustmentRepair = (
       duplicate_groups.push({
         item_id: line.id,
         title: line.title ?? null,
-        quantity: line.quantity ?? null,
-        unit_price: line.unit_price ?? null,
+        quantity: toNumber(line.quantity),
+        unit_price: toNumber(line.unit_price),
         promotion_id: newest.promotion_id ?? null,
         code: newest.code ?? null,
         row_count: ordered.length,
         amount_per_row: toNumber(newest.amount),
+        line_subtotal: toNumber(line.unit_price) * toNumber(line.quantity),
         recorded_discount: ordered.reduce((sum, r) => sum + toNumber(r.amount), 0),
         keep_id: newest.id,
         deletable_ids: ordered.slice(0, -1).map((r) => r.id),

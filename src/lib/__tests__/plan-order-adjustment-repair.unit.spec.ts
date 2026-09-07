@@ -179,4 +179,54 @@ describe("planOrderAdjustmentRepair", () => {
       recorded_discount_total: 0,
     })
   })
+
+  // Regression: the order module returns money fields as BigNumber objects,
+  // not numbers. Coercing only strings left every amount reported as 0, which
+  // a local run against medusa-backend caught — the route reported
+  // amount_per_row 0 and recorded_discount 0 for rows the database held at
+  // 19.10.
+  it("reads amounts that arrive as Medusa BigNumber objects", () => {
+    const bn = (n: number) => ({ valueOf: () => n, toJSON: () => n })
+    const plan = planOrderAdjustmentRepair([
+      {
+        id: "ordli_bignumber",
+        title: "BigNumber amounts",
+        quantity: bn(3),
+        unit_price: bn(110),
+        adjustments: [
+          { id: "b1", promotion_id: "promo_bn", amount: bn(10.1), created_at: "2026-09-07T10:26:16" },
+          { id: "b2", promotion_id: "promo_bn", amount: bn(10.1), created_at: "2026-09-07T10:26:22" },
+          { id: "b3", promotion_id: "promo_bn", amount: bn(10.1), created_at: "2026-09-07T10:32:32" },
+        ],
+      },
+    ])
+
+    expect(plan.duplicate_groups).toHaveLength(1)
+    const g = plan.duplicate_groups[0]
+    expect(g.amount_per_row).toBeCloseTo(10.1, 2)
+    expect(g.recorded_discount).toBeCloseTo(30.3, 2)
+    expect(g.quantity).toBe(3)
+    expect(g.unit_price).toBeCloseTo(110, 2)
+    expect(g.line_subtotal).toBeCloseTo(330, 2)
+    expect(plan.recorded_discount_total).toBeCloseTo(30.3, 2)
+  })
+
+  it("treats an unreadable amount as 0 rather than NaN", () => {
+    const plan = planOrderAdjustmentRepair([
+      {
+        id: "ordli_junk",
+        title: "junk amounts",
+        quantity: 1,
+        unit_price: 100,
+        adjustments: [
+          { id: "j1", promotion_id: "promo_j", amount: {} as any, created_at: "2026-09-07T10:00:01" },
+          { id: "j2", promotion_id: "promo_j", amount: null as any, created_at: "2026-09-07T10:00:02" },
+        ],
+      },
+    ])
+
+    expect(plan.recorded_discount_total).toBe(0)
+    expect(Number.isNaN(plan.recorded_discount_total)).toBe(false)
+    expect(plan.deletable_ids).toEqual(["j1"])
+  })
 })

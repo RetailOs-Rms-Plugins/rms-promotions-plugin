@@ -1,5 +1,5 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
-import { MedusaError, Modules } from "@medusajs/framework/utils"
+import { ContainerRegistrationKeys, MedusaError, Modules } from "@medusajs/framework/utils"
 import {
   planOrderAdjustmentRepair,
   OrderLineWithAdjustments,
@@ -10,18 +10,31 @@ interface AdminRepairOrderAdjustmentsBody {
   dry_run: boolean
 }
 
-const PAID_STATUSES = [
-  "captured",
-  "partially_captured",
-  "partially_refunded",
-  "refunded",
-]
-
-const loadLines = async (
+/**
+ * Two reads, because neither source has everything.
+ *
+ * `retrieveOrder` is the only one that returns the adjustment rows. It does
+ * NOT carry `payment_status` — that is computed by the HTTP layer, and so is
+ * `undefined` both on the module and through Query. A guard written against
+ * it passes silently on a captured order, which a local run against
+ * medusa-backend caught: an order the Admin API reported as `captured` came
+ * back `undefined` here and was reported repairable.
+ *
+ * So the guard reads the money instead of a derived string: Query returns
+ * `payment_collections.captured_amount`, which is a real column. "Has any
+ * money actually been captured" is the property we care about anyway.
+ */
+const loadOrder = async (
   req: MedusaRequest,
   id: string
-): Promise<{ order: any; lines: OrderLineWithAdjustments[] }> => {
+): Promise<{
+  order: any
+  captured_total: number
+  collections: { id: string; status: string; amount: number; captured_amount: number }[]
+  lines: OrderLineWithAdjustments[]
+}> => {
   const orderModule = req.scope.resolve(Modules.ORDER)
+  const query = req.scope.resolve(ContainerRegistrationKeys.QUERY)
 
   let order: any
   try {
@@ -32,6 +45,36 @@ const loadLines = async (
     throw new MedusaError(MedusaError.Types.NOT_FOUND, `Order with id "${id}" not found`)
   }
 
+  const {
+    data: [withPayments],
+  } = await query.graph({
+    entity: "order",
+    fields: [
+      "id",
+      "payment_collections.id",
+      "payment_collections.status",
+      "payment_collections.amount",
+      "payment_collections.captured_amount",
+    ],
+    filters: { id },
+  })
+
+  if (!withPayments) {
+    throw new MedusaError(MedusaError.Types.NOT_FOUND, `Order with id "${id}" not found`)
+  }
+
+  const collections = (withPayments.payment_collections ?? []).map((pc: any) => ({
+    id: pc.id,
+    status: pc.status,
+    amount: Number(pc.amount ?? 0),
+    captured_amount: Number(pc.captured_amount ?? 0),
+  }))
+
+  const captured_total = collections.reduce(
+    (sum: number, pc: any) => sum + (Number.isFinite(pc.captured_amount) ? pc.captured_amount : 0),
+    0
+  )
+
   const lines = (order.items ?? []).map((item: any) => ({
     id: item.id,
     title: item.title,
@@ -40,11 +83,15 @@ const loadLines = async (
     adjustments: item.adjustments ?? [],
   }))
 
-  return { order, lines }
+  return { order, captured_total, collections, lines }
 }
 
+// unit_price and quantity are BigNumbers off the order module, so coerce.
 const subtotalOf = (lines: OrderLineWithAdjustments[]): number =>
   lines.reduce((sum, l) => sum + Number(l.unit_price ?? 0) * Number(l.quantity ?? 0), 0)
+
+// Money has moved. Do not touch the order's discounts.
+const isPaid = (captured_total: number): boolean => captured_total > 0
 
 /**
  * Report leaked adjustment rows. Read-only.
@@ -55,7 +102,7 @@ const subtotalOf = (lines: OrderLineWithAdjustments[]): number =>
  */
 export const GET = async (req: MedusaRequest, res: MedusaResponse) => {
   const { id } = req.params
-  const { order, lines } = await loadLines(req, id)
+  const { order, lines, captured_total, collections } = await loadOrder(req, id)
   const plan = planOrderAdjustmentRepair(lines)
 
   const subtotal = subtotalOf(lines)
@@ -64,9 +111,9 @@ export const GET = async (req: MedusaRequest, res: MedusaResponse) => {
     order_id: order.id,
     display_id: order.display_id,
     version: order.version,
-    payment_status: order.payment_status,
-    fulfillment_status: order.fulfillment_status,
-    repairable: !PAID_STATUSES.includes(order.payment_status),
+    captured_total,
+    payment_collections: collections,
+    repairable: !isPaid(captured_total),
     subtotal,
     recorded_discount: plan.recorded_discount_total,
     recorded_total: subtotal - plan.recorded_discount_total,
@@ -91,12 +138,13 @@ export const POST = async (
   const { id } = req.params
   const { adjustment_ids, dry_run } = req.validatedBody
 
-  const { order, lines } = await loadLines(req, id)
+  const { order, lines, captured_total } = await loadOrder(req, id)
 
-  if (PAID_STATUSES.includes(order.payment_status)) {
+  if (isPaid(captured_total)) {
     throw new MedusaError(
       MedusaError.Types.INVALID_DATA,
-      `Cannot repair adjustments on an order with payment_status "${order.payment_status}"`
+      `Cannot repair adjustments on order "${id}": ${captured_total} has already been captured. ` +
+        `Repairing discounts after money has moved would leave the order and the payment disagreeing.`
     )
   }
 
@@ -143,7 +191,7 @@ export const POST = async (
 
   // read back so the response reports what the order actually says now,
   // not what we predicted
-  const after = await loadLines(req, id)
+  const after = await loadOrder(req, id)
   const afterPlan = planOrderAdjustmentRepair(after.lines)
   const afterSubtotal = subtotalOf(after.lines)
 
