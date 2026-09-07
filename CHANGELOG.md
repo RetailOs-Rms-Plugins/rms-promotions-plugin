@@ -1,5 +1,35 @@
 # @retailos-ai/rms-promotions-extension
 
+## 1.9.0
+
+### Minor Changes
+
+- 6201912: Add `/admin/order-adjustment-repair/:id` for finding and removing leaked order discount rows.
+
+  A promoted order line should carry exactly one `order_line_item_adjustment` row per promotion. Medusa leaves extra rows behind when an order-edit confirm fails: `undoLastChange_`, the rollback handler of the `confirmOrderChanges` step, restores the order version, the order change, the actions, the items, the summary, the shipping methods and the credit lines, but not the adjustments. Its sibling `revertLastChange_` does. Nothing filters the leftovers out on read either, because the `version` column on an adjustment is never used as a read filter, so every orphan keeps counting toward the order total. haturki order #880 accumulated five rows on each of two lines and one line went negative.
+
+  `GET` reports each line's rows grouped by promotion, flags the groups holding more than one, and lists the ids that are safe to remove. `POST` takes `adjustment_ids` and soft-deletes exactly those, accepting an id only if `GET` listed it as deletable, so it must belong to that order and must not be a promotion's last remaining row. Paid orders are refused. `dry_run` reports the projected totals without writing, and because the delete is soft, `restoreOrderLineItemAdjustments` undoes it.
+
+### Patch Changes
+
+- a9a0aa7: Fix typed coupon codes discounting nothing on lines that already carry a bundle or buy-get promotion.
+
+  Medusa's `computeActions` shares one budget map and orders promotions by `application_method.value` descending, ignoring whether that value is a percentage or a price. A bundle promotion priced at 129.90 therefore computes before a "50% off" coupon (value 50) and drains the line's budget, leaving the coupon with a scrap of its worth or nothing at all. ADR-0009 already covered this for auto-apply promotions, but `restoreEvictedStandardPromos` only looked at `listPromotionExtConfigs({ auto_apply: true })` — and a typed coupon has no config row, so it was never rescued.
+
+  `restoreEvictedStandardPromos` now also picks up promotions linked to the cart that this plugin does not compute itself, and recomputes them against a clean budget. `computeNonStandardAdjustments` drops the starved amount for any promotion that was recomputed, so the clean value wins instead of losing the dedupe.
+
+  Measured against haturki cart `cart_01M05AGMYFNATQ1CEKA4MEEK9G`: a 50% coupon on a 69 x 2 line under a "2 for 129.90" bundle was writing 6.53 of discount and now writes 64.95.
+
+  Fixed-amount coupons whose value outranked the bundle price were already working and are unaffected.
+
+- 0de7d38: Recover a typed coupon code that Medusa refused to attach to the cart.
+
+  A coupon that computes to zero is dropped by `updateCartPromotionsStep`, so it appears in neither the cart's promotion links nor the `promotion_ext_config` table. Both lookups in `restoreEvictedStandardPromos` therefore missed it, and the coupon stayed at zero. This is the common shape: a cart with a single promoted product has no line with budget left over, so the code is evicted outright rather than merely starved.
+
+  `computeNonStandardAdjustments` now accepts `submittedCodes`, and the store route passes the codes the shopper actually entered. `restoreEvictedStandardPromos` resolves those by code, recomputes them against a clean budget, and links any that earn an adjustment.
+
+  Measured on a real Medusa backend with the published build for comparison. One line of 69 x 2 under a "2 for 129.90" bundle: the coupon went from 0.00 to 64.95. Two lines (99 x 1 under 79.90, plus the above): 38.27 to 99.45, which is 50% off the post-bundle total.
+
 ## 1.8.0
 
 ### Minor Changes
