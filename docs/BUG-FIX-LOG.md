@@ -26,6 +26,7 @@ Single source of truth for all bug fixes in the promotion plugin. Each entry rec
 | BF-014 | None | `zero-adjustment-promo-bugs.spec.ts` — BF-014 describe |
 | BF-015 | `compute-non-standard-adjustments.unit.spec.ts` — 3 dedup tests | None |
 | BF-016 | None | None — requires concurrent callers to reproduce |
+| BF-017 | `recalc-order-edit-promotions.unit.spec.ts` | None — the runner does not start (jest 30 + `--experimental-vm-modules` breaks `pg`) |
 
 ---
 
@@ -45,6 +46,8 @@ Single source of truth for all bug fixes in the promotion plugin. Each entry rec
 | `src/api/admin/cart-adjustments/[cart_id]/[id]/route.ts` | BF-011 |
 | `src/api/admin/cart-adjustments/[cart_id]/batch/route.ts` | BF-011 |
 | `src/lib/adjustment-spread.ts` | BF-010 |
+| `src/lib/recalc-order-edit-promotions.ts` | BF-017 |
+| `src/api/admin/order-edits/middlewares.ts` | BF-017 |
 
 ---
 
@@ -415,3 +418,30 @@ Frontend amplifies visibility: storefront uses local-first IndexedDB (Dexie) wit
 **Reverts if removed:** Standard auto-apply adjustments duplicate during concurrent hook+subscriber execution. Affects rapid storefront interactions on carts with auto-apply standard promotions.
 
 **Interaction:** Same class of bug as BF-002/BF-006 (concurrent writers). BF-002 moved logic into the hook but kept the subscriber as async fallback — this fix makes the shared function idempotent regardless of concurrent callers.
+
+---
+
+## BF-017: Order edit never recomputes the promotion amount
+
+**Date:** 2026-09-08
+**Severity:** High
+**Reported by:** Measured on migrationtest stage, order #107, created for the test
+**GitHub:** #117
+
+**Symptom:** Confirming an order edit leaves a promotion's adjustment at the amount it had when the order was placed. Six confirms took a line at 8 ILS from quantity 3 to quantity 7; the order total moved every time, 21.60 to 53.60, and the discount stayed at 2.40 where 10% of the quantity-7 line is 5.60. The customer is over-charged by the gap, which grows with every edit. Seen on both a percentage promotion (migrationtest #107) and a fixed-price one (haturki #880).
+
+Fires on every order edit of a promoted order, with no precondition. Its sibling in the host app (duplicated rows, retailOs-customers/medusa-backend#935) needs a confirm to fail and measured at 1 order in 916 on haturki, so this one is the more common of the two.
+
+**Root cause:** All three enforcement layers operate on a cart. Nothing recomputes once the cart is an order. Medusa's own `computeAdjustmentsForPreviewWorkflow` would do it — it runs inside every order-edit mutation workflow — but it is gated on `order.promotions.length && orderChange.carry_over_promotions`, and `beginOrderEditOrderWorkflow` never sets that flag. Only the exchange flow writes it, so on an ordinary edit the branch never runs and the previous amount is carried forward.
+
+**Fix:** `recalcOrderEditPromotions`, wired as a middleware on `POST /admin/order-edits/:id/confirm`. Under the order's own lock it persists `carry_over_promotions: true` on the active **edit** change, runs `computeAdjustmentsForPreviewWorkflow` so Medusa's engine prices the previewed order, then adds a merged set of `ITEM_ADJUSTMENTS_REPLACE` actions for the lines where the engine's list is not the whole story. The flag has to be persisted rather than passed as input: the same workflow deletes every replace action when the flag reads falsy in the database, which would undo its own first branch.
+
+The merge pass exists because a replace action replaces a line's whole adjustment list while the engine only produces rows for the order's promotions. Operator-created adjustments (no `promotion_id`) and bundle or buy-get rows (priced at `application_method.value`, which ADR-0004 pins at 1) are carried over from the order instead. An order whose promotions are all in a non-standard mode is skipped outright.
+
+**Files changed:** `src/lib/recalc-order-edit-promotions.ts` (new), `src/api/admin/order-edits/middlewares.ts` (middleware entry).
+
+A row is replaced only when the engine actually priced its promotion on that line. Probing a real order caught why that matters: `computeActions` sees `active` promotions only, so one deactivated after placement returns nothing, and treating that as "no discount" zeroed the discount on the confirmed order.
+
+**Reverts if removed:** Every order-edit confirm on a promoted order records the placement-time discount again, and the order total is computed from it. Watch `recalc-order-edit-promotions.unit.spec.ts`, and `medusa-backend/src/scripts/probe-order-edit-recompute.ts` for the end-to-end run against a real database (8 checks, including a control order that reproduces the bug).
+
+**Interaction:** ADR-0011 records the decision and amends ADR-0001, which decided a three-layer pattern. Bundle and buy-get amounts still do not follow an order edit — they are preserved, not recomputed. The `/admin/order-edits/:id/custom-items` route stays as the operator's workaround for that. Rows this fix writes carry whole-line amounts, which is what makes `GET /admin/order-adjustment-repair/:id` able to describe a line unambiguously (#118). Runs under the order lock for the reason BF-016 documents. One gap it does not close: nothing caps the merged list against the line subtotal, so a line carrying both a near-total bundle discount and a standard promotion can still over-discount — the cart-side equivalent is `capAdjustmentsToSubtotal`.
