@@ -564,6 +564,92 @@ describe("capAdjustmentsToSubtotal", () => {
     expect(result.find((a) => (a as any).code === "33off1")?.amount).toBe(1000)
     expect(result.find((a) => (a as any).code === "33off2")?.amount).toBe(750)
   })
+
+  it("clamps a single priority adjustment larger than the item subtotal", () => {
+    const itemSubtotals = new Map([["item_x", 5000]])
+    const priorityAdjustments = [{ item_id: "item_x", amount: 8000 }]
+    const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, [])
+    const totalForX = result.filter((a) => a.item_id === "item_x").reduce((s, a) => s + a.amount, 0)
+    expect(totalForX).toBe(5000)
+  })
+
+  it("bounds several priority adjustments on one item by that item's subtotal", () => {
+    const itemSubtotals = new Map([["item_x", 5000]])
+    const priorityAdjustments = [
+      { item_id: "item_x", amount: 4000 },
+      { item_id: "item_x", amount: 4000 },
+    ]
+    const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, [])
+    const totalForX = result.filter((a) => a.item_id === "item_x").reduce((s, a) => s + a.amount, 0)
+    expect(totalForX).toBe(5000)
+  })
+
+  it("a priority overspend does not push the item total past its subtotal", () => {
+    const itemSubtotals = new Map([["item_x", 5000]])
+    const priorityAdjustments = [{ item_id: "item_x", amount: 8000 }]
+    const otherAdjustments = [{ item_id: "item_x", amount: 2000, code: "std_a" }]
+    const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, otherAdjustments)
+    const totalForX = result.filter((a) => a.item_id === "item_x").reduce((s, a) => s + a.amount, 0)
+    expect(totalForX).toBe(5000)
+  })
+
+  it("clamping a priority adjustment keeps its other fields", () => {
+    const itemSubtotals = new Map([["item_x", 5000]])
+    const priorityAdjustments = [
+      { item_id: "item_x", amount: 8000, promotion_id: "bundle_a" },
+    ]
+    const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, [])
+    expect(result).toHaveLength(1)
+    expect(result[0].amount).toBe(5000)
+    expect((result[0] as any).promotion_id).toBe("bundle_a")
+  })
+
+  it("leaves priority adjustments alone when no subtotals are known at all", () => {
+    const itemSubtotals = new Map<string, number>()
+    const priorityAdjustments = [{ item_id: "item_x", amount: 8000 }]
+    const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, [])
+    // An unreadable cart is not a zero budget: dropping the row here would silently
+    // delete a legitimate discount whenever the cart's items fail to load.
+    expect(result).toHaveLength(1)
+    expect(result[0].amount).toBe(8000)
+  })
+
+  it("still caps a priority adjustment whose item is missing from a populated map", () => {
+    const itemSubtotals = new Map([["item_y", 3000]])
+    const priorityAdjustments = [{ item_id: "item_x", amount: 8000 }]
+    const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, [])
+    // The cart read worked, so item_x is a stale row rather than a missing budget.
+    expect(result).toHaveLength(0)
+  })
+
+  it("drops a priority adjustment that an earlier row has fully starved", () => {
+    const itemSubtotals = new Map([["item_x", 5000]])
+    const priorityAdjustments = [
+      { item_id: "item_x", amount: 5000, promotion_id: "bundle_a" },
+      { item_id: "item_x", amount: 4000, promotion_id: "bundle_b" },
+    ]
+    const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, [])
+    // Dropping rather than zeroing matches the standard branch. The caller filters on
+    // `amount > 0` when deciding which promotions to keep linked, so a zeroed row and a
+    // dropped row are treated the same there.
+    expect(result).toHaveLength(1)
+    expect((result[0] as any).promotion_id).toBe("bundle_a")
+    expect(result[0].amount).toBe(5000)
+  })
+
+  it("clamps priority adjustments per item, not across the cart", () => {
+    const itemSubtotals = new Map([["item_x", 5000], ["item_y", 3000]])
+    const priorityAdjustments = [
+      { item_id: "item_x", amount: 9000 },
+      { item_id: "item_y", amount: 1000 },
+    ]
+    const result = capAdjustmentsToSubtotal(itemSubtotals, priorityAdjustments, [])
+    const totalForX = result.filter((a) => a.item_id === "item_x").reduce((s, a) => s + a.amount, 0)
+    const totalForY = result.filter((a) => a.item_id === "item_y").reduce((s, a) => s + a.amount, 0)
+    // item_x is clamped to its own subtotal; item_y's budget is not spent on item_x
+    expect(totalForX).toBe(5000)
+    expect(totalForY).toBe(1000)
+  })
 })
 
 // ─── BF-010: Tax basis + no Math.floor ─────────────────────────────────────

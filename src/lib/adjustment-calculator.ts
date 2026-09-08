@@ -201,9 +201,24 @@ export function capAdjustmentsToSubtotal(
     remainingByItem.set(itemId, subtotal)
   }
 
+  // An empty subtotal map means the caller could not read the cart's items at all,
+  // so there is no budget to cap against and no line that could go negative. Pass the
+  // priority rows through rather than reading a missing map as a zero budget, which
+  // would delete every bundle discount on the cart. A single item missing from an
+  // otherwise populated map is a stale adjustment, and still gets capped to zero.
+  const budgetIsKnown = itemSubtotals.size > 0
+
+  const cappedPriority: typeof priorityAdjustments = []
   for (const adj of priorityAdjustments) {
-    const remaining = remainingByItem.get(adj.item_id) ?? 0
-    remainingByItem.set(adj.item_id, remaining - adj.amount)
+    if (!budgetIsKnown) {
+      cappedPriority.push(adj)
+      continue
+    }
+    const remaining = Math.max(0, remainingByItem.get(adj.item_id) ?? 0)
+    const cappedAmount = Math.min(adj.amount, remaining)
+    if (cappedAmount <= 0) continue
+    remainingByItem.set(adj.item_id, remaining - cappedAmount)
+    cappedPriority.push({ ...adj, amount: cappedAmount })
   }
 
   const sorted = [...otherAdjustments].sort((a, b) => b.amount - a.amount)
@@ -217,5 +232,5 @@ export function capAdjustmentsToSubtotal(
     capped.push({ ...adj, amount: cappedAmount })
   }
 
-  return [...priorityAdjustments, ...capped]
+  return [...cappedPriority, ...capped]
 }
