@@ -11,15 +11,18 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 
 ## File structure
 
-Single-context repo — domain scoped to `rms-promotions-extension-plugin`:
+Single-context repo:
 
 ```
 /
 ├── CONTEXT.md
 ├── docs/adr/
 │   └── 0001-*.md
-└── rms-promotions-extension-plugin/
-└── medusa-backend/
+└── src/
+    ├── modules/
+    ├── workflows/
+    ├── api/
+    └── subscribers/
 ```
 
 ## Use the glossary's vocabulary
